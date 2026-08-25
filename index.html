@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>CharacGen Studio, du roman au livre illustré</title>
+
+    <meta name="description" content="Importez un roman ou une nouvelle, et CharacGen Studio en extrait les personnages, les décors et les scènes, puis les illustre pour composer un livre." />
+    <meta name="theme-color" content="#020617" />
+
+    <!-- Aperçu lors du partage d'un lien -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="CharacGen Studio" />
+    <meta property="og:description" content="Du roman au livre illustré : personnages, décors et storyboard générés à partir de votre texte." />
+    <meta property="og:locale" content="fr_FR" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Icône d'onglet, dessinée en SVG pour éviter un fichier supplémentaire -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23020617'/%3E%3Cpath d='M18 14h20a10 10 0 0 1 10 10v26H28a10 10 0 0 1-10-10z' fill='none' stroke='%236366f1' stroke-width='4' stroke-linejoin='round'/%3E%3Ccircle cx='33' cy='30' r='6' fill='%23d946ef'/%3E%3C/svg%3E" />
+
+    <!--
+      Tailwind, les icônes et le lecteur PDF sont installés dans le projet et
+      compilés avec lui. Ils étaient auparavant chargés depuis des services
+      extérieurs à chaque visite, ce qui retardait l'affichage et rendait
+      l'application dépendante de la disponibilité de ces services.
+      Les styles vivent désormais dans index.css et tailwind.config.js.
+    -->
+
+    <!-- Polices -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

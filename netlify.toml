@@ -1,0 +1,35 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# Sans cette section, `netlify dev` attend Vite sur le port 5173 par defaut,
+# alors que le projet le fixe a 3000 : le serveur ne demarrait jamais.
+[dev]
+  command = "npm run dev"
+  targetPort = 3000
+  port = 8888
+  framework = "#custom"
+  autoLaunch = false
+
+# Toutes les adresses renvoient vers l'application, qui gere elle-meme sa navigation.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Les traitements IA passent par une Edge Function : les fonctions classiques
+# sont coupees au bout de dix secondes, insuffisant pour generer une image.
+
+# En-tetes de securite de base.
+#
+# Pas de X-Frame-Options : le carrousel Projets du portfolio affiche chaque projet
+# dans une iframe, et cet en-tete ne sait dire que "tout le monde" ou "personne",
+# ALLOW-FROM n'etant plus supporte par les navigateurs. C'est frame-ancestors qui
+# designe les sites autorises, ici le portfolio en ligne et le developpement local.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Content-Security-Policy = "frame-ancestors 'self' https://*.netlify.app http://localhost:* http://127.0.0.1:*"

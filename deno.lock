@@ -1,0 +1,39 @@
+{
+  "version": "5",
+  "remote": {
+    "https://edge.netlify.com/": "fd941d61d88673d5f28aab283fb86fcc50f08a3bc80ee5470498fcfa88c65cfb",
+    "https://edge.netlify.com/bootstrap/config.ts": "6a2ce0e544e15e8f8883a5c18da5948e37fd0f2619f68cb31f3af53c51817025",
+    "https://edge.netlify.com/bootstrap/context.ts": "e97240232121e2f369f6546ce961490f34d961ea1ea54be3ff09633e3f08373f",
+    "https://edge.netlify.com/bootstrap/cookie.ts": "8b0baae708989ca183c6f3b4ab3d029e6abcbc2e43f93edeb0ff447b3bbc3a05",
+    "https://edge.netlify.com/bootstrap/edge_function.ts": "b8253e86aa83c67341f5cfedeba5049d77fbf84dcab7eceff7566b7728ae9b39",
+    "https://edge.netlify.com/bootstrap/globals/types.ts": "eaa6148ded3121d8dee62dd91c86e7fe76601df0f3ca8d7962243a30f4c8935f",
+    "https://esm.sh/@google/genai@1.34.0": "8760dca39542ce35fa2c00f4e04f9c717c0ff47d7ad1a0a8dc9a0442a8ad5a19",
+    "https://esm.sh/@google/genai@1.34.0/denonext/genai.mjs": "3717afdf9e2b6f57e0bcc658df665e6cac2c5a92dee3157547b3f7a5b87e8a5b",
+    "https://esm.sh/undici-types@7.24.0/handlers": "fabf6997a3adf11e45d11e3c4d58d0634ab98f9d72f3116f3694123818ccd457",
+    "https://esm.sh/undici-types@7.24.0/retry-handler": "fabf6997a3adf11e45d11e3c4d58d0634ab98f9d72f3116f3694123818ccd457"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@fortawesome/fontawesome-free@^7.3.1",
+        "npm:@google/genai@^1.34.0",
+        "npm:@netlify/functions@3",
+        "npm:@types/node@^22.14.0",
+        "npm:@vitejs/plugin-react@5",
+        "npm:autoprefixer@^10.5.4",
+        "npm:file-saver@2.0.5",
+        "npm:jspdf@^4.2.1",
+        "npm:jszip@3.10.1",
+        "npm:lz-string@^1.5.0",
+        "npm:pdfjs-dist@^3.11.174",
+        "npm:postcss@^8.5.26",
+        "npm:react-dom@^19.2.3",
+        "npm:react@^19.2.3",
+        "npm:tailwindcss@^3.4.19",
+        "npm:typescript@~5.8.2",
+        "npm:uuid@13",
+        "npm:vite@^6.2.0"
+      ]
+    }
+  }
+}

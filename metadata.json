@@ -1,0 +1,5 @@
+{
+  "name": "CharacGen Studio",
+  "description": "Un outil qui analyse des histoires (PDF ou texte) pour en extraire les personnages, les decors et les scenes, puis genere des fiches de reference visuelles coherentes.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.netlify/
+
+# Secrets : ne jamais partager
+.env
+.env.local
+.env.*.local
+
+# Journaux et fichiers temporaires
+*.log
+.DS_Store
+Thumbs.db
+
+# Tables cmaps de pdf.js, recopiees automatiquement par vite.config.ts
+public/cmaps/
