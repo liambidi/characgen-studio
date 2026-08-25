@@ -175,6 +175,32 @@ const recupererAncienneSauvegarde = (): ProjetEnregistre | null => {
 };
 
 // ---------------------------------------------------------------------------
+// Petites preferences d'interface
+//
+// localStorage n'est pas toujours disponible : navigation privee de Safari,
+// cookies bloques, page ouverte dans une iframe tierce. Un simple `getItem` y
+// LEVE une exception. Appelee depuis un effet React sans protection, elle faisait
+// tomber toute l'application sur une page blanche, pour un simple compteur de
+// tutoriel. Ces deux fonctions ne peuvent pas echouer.
+// ---------------------------------------------------------------------------
+
+export const lirePreference = (cle: string): string | null => {
+  try {
+    return localStorage.getItem(cle);
+  } catch {
+    return null;
+  }
+};
+
+export const ecrirePreference = (cle: string, valeur: string): void => {
+  try {
+    localStorage.setItem(cle, valeur);
+  } catch {
+    /* Espace plein ou stockage interdit : une preference perdue n'a pas d'importance. */
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Espace occupe
 // ---------------------------------------------------------------------------
 

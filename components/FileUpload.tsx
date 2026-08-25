@@ -1,4 +1,6 @@
 import React, { useCallback, useState } from 'react';
+import { verifierFichierRecit, EXTENSIONS_RECIT } from '../services/fichiers';
+import { notifierErreur } from '../services/notifications';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
@@ -14,6 +16,25 @@ interface FileUploadProps {
 const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progression }) => {
   const [isDragging, setIsDragging] = useState(false);
 
+  /**
+   * Filtre unique pour les deux chemins d'entree.
+   *
+   * L'attribut `accept` du champ ne s'applique PAS au glisser-deposer : un
+   * fichier .docx lache sur la zone etait lu comme du texte brut, puis envoye
+   * chez Google en caracteres illisibles, et facture. Le poids n'etait pas
+   * verifie non plus : un PDF de plusieurs centaines de megaoctets figeait
+   * l'onglet sans un mot d'explication.
+   */
+  const accepter = useCallback((file: File | undefined | null) => {
+    if (!file) return;
+    try {
+      verifierFichierRecit(file);
+      onFileSelect(file);
+    } catch (erreur) {
+      notifierErreur("Fichier refusé.", erreur);
+    }
+  }, [onFileSelect]);
+
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -28,15 +49,15 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      onFileSelect(e.dataTransfer.files[0]);
-    }
-  }, [onFileSelect]);
+    accepter(e.dataTransfer.files?.[0]);
+  }, [accepter]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      onFileSelect(e.target.files[0]);
-    }
+    const file = e.target.files?.[0];
+    // Vide le champ avant tout : sans cela, rechoisir le meme fichier apres un
+    // refus ne declencherait plus aucun evenement.
+    e.target.value = '';
+    accepter(file);
   };
 
   return (
@@ -58,7 +79,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
           type="file"
           id="file-upload"
           className="hidden"
-          accept=".pdf,.txt,.md"
+          accept={EXTENSIONS_RECIT.join(',')}
           onChange={handleChange}
           disabled={isLoading}
         />

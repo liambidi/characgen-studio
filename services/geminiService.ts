@@ -65,6 +65,14 @@ const DELAI_SONDAGE_MS = 2_000;
 const ATTENTE_DEMARRAGE_MS = 90_000;
 /** Budget total de la fonction d'arriere-plan chez Netlify. */
 const ATTENTE_MAX_MS = 15 * 60 * 1_000;
+/**
+ * Nombre de sondages rates d'affilee tolere. Un trou de reseau passager ne doit
+ * pas jeter une analyse en cours, mais une connexion reellement coupee ne doit
+ * pas non plus laisser tourner une barre de progression pendant un quart d'heure.
+ */
+const ECHECS_SONDAGE_MAX = 10;
+/** Taille maximale acceptee cote serveur, verifiee ici pour repondre tout de suite. */
+const TAILLE_TEXTE_MAX = 400_000;
 
 const erreurAnnulation = () => {
   const e = new Error("Analyse annulee.");
@@ -100,6 +108,18 @@ export const analyzeStory = async (
   signal?: AbortSignal,
   onProgress?: (etape: string) => void
 ): Promise<AnalysisResult> => {
+  // Verifie ici plutot qu'apres un aller-retour : le serveur refuserait de toute
+  // facon, mais l'utilisateur attendrait plusieurs secondes pour l'apprendre.
+  if (!text || text.trim().length < 50) {
+    throw new Error("Le texte a analyser est vide ou trop court.");
+  }
+  if (text.length > TAILLE_TEXTE_MAX) {
+    throw new Error(
+      `Ce recit fait ${text.length.toLocaleString("fr-FR")} caracteres, au dela des ` +
+        `${TAILLE_TEXTE_MAX.toLocaleString("fr-FR")} acceptes. Importez-le en plusieurs parties.`
+    );
+  }
+
   const jobId = uuidv4();
 
   let lancement: Response;
@@ -121,8 +141,22 @@ export const analyzeStory = async (
     throw new Error(`L'analyse n'a pas pu etre lancee (erreur ${lancement.status}).`);
   }
 
+  /**
+   * Libere l'enregistrement laisse par la fonction d'arriere-plan. Sans appel,
+   * chaque import laissait un resultat complet dans le magasin, indefiniment.
+   * Tir sans retour : le resultat est deja entre nos mains, un echec ici n'a
+   * aucune consequence pour l'utilisateur.
+   */
+  const ranger = () => {
+    void fetch(`${URL_STATUT}?id=${encodeURIComponent(jobId)}&fin=1`, {
+      method: "GET",
+      keepalive: true,
+    }).catch(() => {});
+  };
+
   const debut = Date.now();
   let demarree = false;
+  let echecsDaffilee = 0;
 
   while (true) {
     await patienter(DELAI_SONDAGE_MS, signal);
@@ -136,14 +170,26 @@ export const analyzeStory = async (
     try {
       const reponse = await fetch(`${URL_STATUT}?id=${encodeURIComponent(jobId)}`, { signal });
       statut = await reponse.json();
+      echecsDaffilee = 0;
     } catch (e: any) {
       if (e?.name === "AbortError") throw e;
-      // Un trou de reseau passager ne doit pas jeter une analyse en cours.
+      // Un trou de reseau passager ne doit pas jeter une analyse en cours,
+      // mais une connexion coupee ne doit pas non plus faire attendre un quart d'heure.
+      echecsDaffilee += 1;
+      if (echecsDaffilee >= ECHECS_SONDAGE_MAX) {
+        throw new Error("La connexion au serveur est perdue. Verifiez votre reseau puis relancez l'import.");
+      }
       continue;
     }
 
-    if (statut?.etat === "termine") return statut.resultat as AnalysisResult;
-    if (statut?.etat === "erreur") throw new Error(statut.message || "L'analyse a echoue.");
+    if (statut?.etat === "termine") {
+      ranger();
+      return statut.resultat as AnalysisResult;
+    }
+    if (statut?.etat === "erreur") {
+      ranger();
+      throw new Error(statut.message || "L'analyse a echoue.");
+    }
 
     if (statut?.etat === "encours") {
       demarree = true;

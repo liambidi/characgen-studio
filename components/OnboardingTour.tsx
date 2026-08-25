@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { lirePreference, ecrirePreference } from '../services/dataService';
 import { AppStep } from '../types';
 
 interface OnboardingTourProps {
@@ -51,8 +52,10 @@ const OnboardingTour: React.FC<OnboardingTourProps> = ({ step }) => {
   const [currentContent, setCurrentContent] = useState<{ title: string; content: string; icon: string; stepNumber: number } | null>(null);
 
   useEffect(() => {
-    // Vérifier si cette étape a déjà été vue
-    const hasSeenStep = localStorage.getItem(`characgen_tuto_step_${step}`);
+    // Vérifier si cette étape a déjà été vue. La lecture passe par un accès
+    // protégé : en navigation privée, un localStorage interdit levait une
+    // exception ici même, et la page entière devenait blanche.
+    const hasSeenStep = lirePreference(`characgen_tuto_step_${step}`);
     
     // Si on a du contenu pour cette étape et qu'elle n'a pas été vue
     if (TUTORIAL_CONTENT[step] && !hasSeenStep) {
@@ -66,7 +69,7 @@ const OnboardingTour: React.FC<OnboardingTourProps> = ({ step }) => {
 
   const handleDismiss = () => {
       setIsVisible(false);
-      localStorage.setItem(`characgen_tuto_step_${step}`, 'true');
+      ecrirePreference(`characgen_tuto_step_${step}`, 'true');
   };
 
   if (!isVisible || !currentContent) return null;

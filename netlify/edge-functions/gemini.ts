@@ -1,12 +1,25 @@
 import type { Config, Context } from "@netlify/edge-functions";
 import { GoogleGenAI, Type } from "https://esm.sh/@google/genai@1.34.0";
 import {
+  CHUNK_MAX,
+  LIMITES,
   MODELES,
   ErreurDeSaisie,
+  condenserSegment,
+  construireSchemas,
+  decouperEnParagraphes,
+  decouperImage,
+  memePersonnage,
   estModeleIntrouvable,
+  imageValide,
+  listeValide,
+  lireJson,
   messageLisible,
+  nombreValide,
+  preparerTexte,
+  texteValide,
+  type OutilsAnalyse,
 } from "../shared/analyse.ts";
-
 
 // La cle n'existe QUE cote serveur (variable d'environnement Netlify), jamais dans le bundle envoye au navigateur.
 type Character = any;
@@ -18,8 +31,14 @@ type GenConfig = any;
 
 const getAi = () => new GoogleGenAI({ apiKey: Netlify.env.get("GEMINI_API_KEY") || "" });
 
-// Les modeles et la traduction des erreurs vivent desormais dans netlify/shared/analyse.ts,
+// Les modeles, la traduction des erreurs, le decoupage du texte, les plafonds de
+// saisie et la lecture des reponses vivent tous dans netlify/shared/analyse.ts,
 // partages avec la fonction d'arriere-plan qui analyse les recits.
+//
+// Ils y ont ete deplaces le 2026-08-25 : ce fichier en gardait sa propre copie,
+// et les deux avaient deja diverge. Le decoupage en paragraphes n'etait pas le
+// meme des deux cotes, et le bug de troncature silencieuse devait donc etre
+// corrige deux fois. Une seule definition rend cette classe de panne impossible.
 
 /**
  * Lance une generation en essayant chaque modele du role jusqu'a ce que l'un
@@ -48,118 +67,20 @@ const genererAvecRepli = async (
   );
 };
 
+/**
+ * Ce que le fichier partage attend pour travailler : de quoi decrire un schema
+ * et de quoi interroger le modele. Il ne connait ni Deno ni le SDK charge ici.
+ */
+const OUTILS: OutilsAnalyse = {
+  Type,
+  generer: (role, requete) => genererAvecRepli(role, requete),
+};
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------------------------------------------------------------------------
-// Lecture des reponses JSON
+// Decoupage du recit en segments de scenes
 // ---------------------------------------------------------------------------
-
-const cleanJsonText = (text: string): string => {
-  if (!text) return "{}";
-  let clean = text.replace(/```json\s*/g, "").replace(/```\s*$/g, "");
-  clean = clean.replace(/```/g, "");
-  return clean.trim();
-};
-
-/**
- * Analyse une reponse JSON du modele. Contrairement a la version precedente,
- * cette fonction ne renvoie plus un objet vide en silence : une reponse
- * tronquee ou illisible leve une erreur explicite, sinon l'utilisateur voyait
- * "0 personnage trouve" sans savoir que l'analyse avait echoue.
- */
-const lireJson = (text: string, contexte: string): any => {
-  const brut = cleanJsonText(text || "");
-  if (!brut || brut === "{}") {
-    throw new Error(`${contexte} : le modele n'a renvoye aucune donnee. Reessayez dans un instant.`);
-  }
-  try {
-    return JSON.parse(brut);
-  } catch {
-    const tronquee = brut.length > 200 && !brut.trimEnd().endsWith("}") && !brut.trimEnd().endsWith("]");
-    if (tronquee) {
-      throw new Error(
-        `${contexte} : la reponse a ete coupee avant la fin, il y a trop d'elements a decrire d'un coup. ` +
-          `Relancez en demandant un nombre precis, plus petit.`
-      );
-    }
-    console.error("Reponse illisible :", brut.slice(0, 400));
-    throw new Error(`${contexte} : la reponse du modele est illisible. Reessayez.`);
-  }
-};
-
-// ---------------------------------------------------------------------------
-// Validation des entrees
-// Le point d'entree est public et devinable : tout ce qui arrive du navigateur
-// est verifie avant de partir chez Google, pour que personne ne puisse faire
-// gonfler la facture avec des demandes fabriquees a la main.
-// ---------------------------------------------------------------------------
-
-const LIMITES = {
-  texte: 400_000, // caracteres d'un recit importe
-  prompt: 4_000, // consigne libre ecrite par l'utilisateur
-  image: 12_000_000, // image en base64
-  liste: 200, // nombre de noms ou de titres transmis
-  messages: 60, // longueur d'historique de discussion
-};
-
-// ErreurDeSaisie est importee du fichier partage : il faut que ce soit la meme
-// classe des deux cotes, sinon le `instanceof` de messageLisible ne la reconnait plus.
-
-const texteValide = (valeur: unknown, nom: string, max: number, obligatoire = true): string => {
-  if (valeur === undefined || valeur === null || valeur === "") {
-    if (obligatoire) throw new ErreurDeSaisie(`${nom} est vide. Importez d'abord un texte.`);
-    return "";
-  }
-  if (typeof valeur !== "string") throw new ErreurDeSaisie(`${nom} n'a pas le format attendu.`);
-  if (valeur.length > max) throw new ErreurDeSaisie(`${nom} depasse la taille acceptee (${max} caracteres).`);
-  return valeur;
-};
-
-const listeValide = (valeur: unknown, nom: string): string[] => {
-  if (valeur === undefined || valeur === null) return [];
-  if (!Array.isArray(valeur)) throw new ErreurDeSaisie(`${nom} n'a pas le format attendu.`);
-  if (valeur.length > LIMITES.liste) throw new ErreurDeSaisie(`${nom} contient trop d'elements.`);
-  return valeur.filter((v) => typeof v === "string").map((v) => v.slice(0, 300));
-};
-
-const nombreValide = (valeur: unknown, nom: string, min: number, max: number): number | undefined => {
-  if (valeur === undefined || valeur === null) return undefined;
-  const n = Number(valeur);
-  if (!Number.isFinite(n)) throw new ErreurDeSaisie(`${nom} doit etre un nombre.`);
-  return Math.min(max, Math.max(min, Math.round(n)));
-};
-
-const imageValide = (valeur: unknown, nom: string, obligatoire = true): string => {
-  const v = texteValide(valeur, nom, LIMITES.image, obligatoire);
-  if (v && !v.startsWith("data:image/")) throw new ErreurDeSaisie(`${nom} n'est pas une image valide.`);
-  return v;
-};
-
-// ---------------------------------------------------------------------------
-// Decoupage du texte
-// ---------------------------------------------------------------------------
-
-const CHUNK_MAX = 12_000; // ce qu'un seul appel peut lire confortablement
-
-/** Decoupe un texte en morceaux qui respectent les fins de paragraphe. */
-const decouperEnParagraphes = (texte: string, tailleCible: number): string[] => {
-  const paragraphes = texte.split("\n").filter((p) => p.trim().length > 0);
-  if (paragraphes.length === 0) return [texte];
-
-  const morceaux: string[] = [];
-  let courant = "";
-
-  for (const p of paragraphes) {
-    if (courant.length > 0 && courant.length + p.length > tailleCible) {
-      morceaux.push(courant);
-      courant = p + "\n";
-    } else {
-      courant += p + "\n";
-    }
-  }
-  if (courant.trim().length > 0) morceaux.push(courant);
-  return morceaux;
-};
 
 /**
  * Repartit le recit en autant de segments que de scenes voulues.
@@ -172,15 +93,11 @@ const segmentTextForScenes = (text: string, targetSceneCount: number = 10): stri
   if (total < 500) return [normalise];
 
   const tailleCible = Math.ceil(total / targetSceneCount);
-  const morceaux = decouperEnParagraphes(normalise, tailleCible);
 
-  // Un texte sans retour a la ligne ne peut pas etre coupe proprement :
-  // on le tranche alors a longueur fixe plutot que de tout garder en un bloc.
-  if (morceaux.length === 1 && total > tailleCible * 1.5) {
-    const forces: string[] = [];
-    for (let i = 0; i < total; i += tailleCible) forces.push(normalise.slice(i, i + tailleCible));
-    return forces;
-  }
+  // decouperEnParagraphes garantit qu'aucun morceau ne depasse la taille cible,
+  // y compris pour un texte sans le moindre retour a la ligne : le decoupage de
+  // secours qui figurait ici n'a plus lieu d'etre.
+  const morceaux = decouperEnParagraphes(normalise, tailleCible);
 
   // Le decoupage par paragraphes tombe rarement juste : on fusionne les
   // segments voisins les plus courts jusqu'a obtenir le nombre demande,
@@ -201,73 +118,11 @@ const segmentTextForScenes = (text: string, targetSceneCount: number = 10): stri
   return morceaux;
 };
 
-/**
- * Condense un segment trop long pour tenir dans un seul appel.
- * Le segment est lu par tranches, chaque tranche est resumee, et les resumes
- * sont recolles. Sans cela, les deux tiers d'un roman n'etaient jamais lus.
- */
-const condenserSegment = async (segment: string): Promise<string> => {
-  const tranches = decouperEnParagraphes(segment, CHUNK_MAX);
-  if (tranches.length <= 1) return segment.slice(0, CHUNK_MAX);
-
-  const resumes = await Promise.all(
-    tranches.map(async (tranche, i) => {
-      try {
-        const r = await genererAvecRepli("texteRapide", {
-          contents:
-            `Resume ce passage de roman en 6 a 10 phrases. Garde les actions concretes, les personnages ` +
-            `presents, les lieux et les details visuels. N'invente rien.\n\nPASSAGE :\n"${tranche.slice(0, CHUNK_MAX)}"`,
-          config: { maxOutputTokens: 900 },
-        });
-        return r.text || tranche.slice(0, 1500);
-      } catch (e) {
-        console.error(`Resume de la tranche ${i} impossible`, e);
-        return tranche.slice(0, 1500);
-      }
-    })
-  );
-
-  return resumes.join("\n\n");
-};
-
 // ---------------------------------------------------------------------------
 // Schemas de reponse
 // ---------------------------------------------------------------------------
 
-const SCHEMA_PERSONNAGE = {
-  type: Type.OBJECT,
-  properties: {
-    name: { type: Type.STRING },
-    role: { type: Type.STRING },
-    shortDescription: { type: Type.STRING },
-    personality: { type: Type.STRING },
-    physicalDescription: { type: Type.STRING },
-  },
-  required: ["name", "role", "shortDescription", "personality", "physicalDescription"],
-};
-
-const SCHEMA_ENVIRONNEMENT = {
-  type: Type.OBJECT,
-  properties: {
-    name: { type: Type.STRING },
-    type: { type: Type.STRING, enum: ["indoor", "outdoor", "space", "abstract"] },
-    description: { type: Type.STRING },
-    mood: { type: Type.STRING },
-  },
-  required: ["name", "type", "description", "mood"],
-};
-
-const SCHEMA_SCENE = {
-  type: Type.OBJECT,
-  properties: {
-    title: { type: Type.STRING },
-    location: { type: Type.STRING },
-    environmentDetail: { type: Type.STRING },
-    description: { type: Type.STRING },
-    originalTextExcerpt: { type: Type.STRING },
-    charactersPresent: { type: Type.ARRAY, items: { type: Type.STRING } },
-  },
-};
+const { SCHEMA_PERSONNAGE, SCHEMA_ENVIRONNEMENT, SCHEMA_SCENE } = construireSchemas(Type);
 
 // L'analyse d'un recit ne vit plus ici : elle demandait une trentaine de secondes
 // pour le seul appel final, sur un budget d'environ 35 secondes, et tombait en
@@ -277,17 +132,6 @@ const SCHEMA_SCENE = {
 // ---------------------------------------------------------------------------
 // Generation d'images
 // ---------------------------------------------------------------------------
-
-/**
- * Decompose une image encodee en son type reel et ses donnees.
- * Le type etait auparavant force a image/png alors que Google renvoie
- * souvent du JPEG : les images de reference partaient donc mal etiquetees.
- */
-const decouperImage = (dataUrl: string): { mimeType: string; data: string } => {
-  const correspondance = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl || "");
-  if (!correspondance) return { mimeType: "image/png", data: (dataUrl || "").split(",")[1] || "" };
-  return { mimeType: correspondance[1], data: correspondance[2] };
-};
 
 const extraireImage = (response: any, quoi: string): string => {
   const candidate = response?.candidates?.[0];
@@ -400,15 +244,20 @@ const generateSceneImage = async (
     }
   }
 
-  const safeCharsPresent = scene.charactersPresent || [];
+  // Les noms viennent du modele : rien ne garantit que ce sont tous des chaines.
+  // Un `null` dans la liste faisait echouer toute la generation de la scene sur
+  // un "Cannot read properties of null", que l'utilisateur voyait en erreur
+  // technique incomprehensible sur sa vignette.
+  const safeCharsPresent: string[] = Array.isArray(scene.charactersPresent)
+    ? scene.charactersPresent.filter((n: unknown): n is string => typeof n === "string" && n.trim().length > 0)
+    : [];
+
   const presentChars = personnages.filter(
     (c) =>
-      safeCharsPresent.some(
-        (name) =>
-          name.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(name.toLowerCase())
-      ) &&
+      typeof c?.name === "string" &&
       c.imageUrl &&
-      c.status === "completed"
+      c.status === "completed" &&
+      safeCharsPresent.some((nom: string) => memePersonnage(nom, c.name))
   );
 
   presentChars.slice(0, 2).forEach((char) => {
@@ -480,7 +329,7 @@ const editGeneratedImage = async (base64Image: string, prompt: string, reference
 const regenerateCharacterDescription = async (text: string, characterName: string): Promise<Partial<Character>> => {
   const texte = texteValide(text, "Le texte a relire", LIMITES.texte);
   const nom = texteValide(characterName, "Le nom du personnage", 300);
-  const aLire = texte.length > CHUNK_MAX * 3 ? await condenserSegment(texte) : texte;
+  const aLire = await preparerTexte(OUTILS, texte, "Relecture du recit");
 
   const response = await genererAvecRepli("texteExpert", {
     contents:
@@ -550,7 +399,7 @@ const createEnvironmentFromPrompt = async (
 /** Prepare le texte du recit pour une recherche ciblee. */
 const texteALire = async (text: string): Promise<string> => {
   const texte = texteValide(text, "Le texte a analyser", LIMITES.texte);
-  return texte.length > CHUNK_MAX * 3 ? await condenserSegment(texte) : texte;
+  return preparerTexte(OUTILS, texte, "Relecture du recit");
 };
 
 const findMissingEnvironments = async (
@@ -756,7 +605,8 @@ const analyzeScenes = async (text: string, knownCharacters: string[], sceneCount
 
           // Un segment plus long que ce qu'un appel peut lire est condense,
           // jamais tronque : aucune partie du recit n'est ignoree.
-          const aLire = segment.length > CHUNK_MAX ? await condenserSegment(segment) : segment;
+          const aLire =
+            segment.length > CHUNK_MAX ? await condenserSegment(OUTILS, segment, "Lecture du segment") : segment;
 
           const response = await genererAvecRepli("texteExpert", {
             contents:

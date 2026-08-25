@@ -19,8 +19,10 @@ import type { Context } from "@netlify/functions";
 import { getStore } from "@netlify/blobs";
 import { GoogleGenAI, Type } from "@google/genai";
 import {
+  LIMITES,
   MAGASIN_ANALYSES,
   MODELES,
+  PREFIXE_LIMITE,
   ErreurDeSaisie,
   analyserRecit,
   estModeleIntrouvable,
@@ -45,7 +47,7 @@ const RATE_WINDOW_MS = 60_000; // par minute et par adresse
 const estLimite = async (ip: string): Promise<boolean> => {
   try {
     const magasin = getStore(MAGASIN_ANALYSES);
-    const cle = `limite/${ip}`;
+    const cle = `${PREFIXE_LIMITE}${ip}`;
     const maintenant = Date.now();
     const anciennes: number[] = (await magasin.get(cle, { type: "json" })) || [];
     const recentes = anciennes.filter((t) => maintenant - t < RATE_WINDOW_MS);
@@ -132,6 +134,23 @@ export default async (req: Request, context: Context) => {
 
     if (await estLimite(context.ip || "inconnue")) {
       await ecrire({ etat: "erreur", message: "Trop de requetes, reessayez dans une minute." });
+      return;
+    }
+
+    // Verifie avant toute depense. `analyserRecit` refuserait aussi ce texte,
+    // mais seulement apres avoir lance le decoupage : autant le dire tout de suite.
+    if (typeof text !== "string" || text.trim().length < 50) {
+      await ecrire({
+        etat: "erreur",
+        message: "Le texte recu est vide ou trop court pour etre analyse.",
+      });
+      return;
+    }
+    if (text.length > LIMITES.texte) {
+      await ecrire({
+        etat: "erreur",
+        message: `Le recit depasse la taille acceptee (${LIMITES.texte} caracteres). Importez un extrait plus court.`,
+      });
       return;
     }
 

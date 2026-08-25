@@ -35,6 +35,27 @@ const copierLesCmaps = () => ({
   },
 });
 
+/**
+ * Avertit au demarrage que les appels IA locaux partent en production.
+ *
+ * Le proxy ci-dessous est ce qui fait marcher `npm run dev`, mais il a une
+ * consequence qui ne se voit nulle part dans le navigateur : chaque import de
+ * recit, chaque image generee en local consomme le quota Gemini du site en
+ * ligne, et une modification de l'Edge Function elle-meme n'est PAS testee
+ * tant qu'elle n'est pas deployee. C'etait ecrit en commentaire ici ; personne
+ * ne lit un commentaire de configuration en travaillant.
+ */
+const avertirProxyProduction = () => ({
+  name: 'avertir-proxy-production',
+  configureServer() {
+    console.log('');
+    console.log('  [33m▲  Les appels IA locaux partent vers ' + SITE_EN_LIGNE + '[0m');
+    console.log('     Ils consomment le quota Gemini reel du site en ligne.');
+    console.log("     Une modification des fonctions Netlify n'est active qu'apres deploiement.");
+    console.log('');
+  },
+});
+
 // Aucune cle API n'est injectee ici : toutes les requetes Gemini passent par
 // l'Edge Function Netlify (netlify/edge-functions/gemini.ts), qui seule connait la cle.
 export default defineConfig({
@@ -59,7 +80,7 @@ export default defineConfig({
       },
     },
   },
-  plugins: [react(), copierLesCmaps()],
+  plugins: [react(), copierLesCmaps(), avertirProxyProduction()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),

@@ -6,6 +6,8 @@
  * à ralentir le premier affichage de la page.
  */
 
+import { notifier } from './notifications';
+
 /** Nombre de pages lues au maximum, pour ne pas saturer la mémoire du navigateur. */
 const PAGES_MAX = 500;
 
@@ -36,6 +38,18 @@ const extraireDepuisPdf = async (file: File): Promise<string> => {
 
     const tache = pdfjsLib.getDocument({
       data: donnees,
+      // Coupe l'évaluation de code par pdf.js.
+      //
+      // La version 3 de pdf.js installée ici est concernée par CVE-2024-4367 :
+      // un PDF fabriqué exprès peut faire exécuter du JavaScript de son choix
+      // dans la page, par le chemin de rendu des polices. Or l'application
+      // consiste précisément à ouvrir un PDF fourni par l'utilisateur.
+      //
+      // `isEvalSupported: false` est la parade officielle et ne coûte qu'un
+      // rendu de police légèrement plus lent, invisible ici puisqu'on n'extrait
+      // que du texte. La correction de fond reste la montée en version majeure
+      // de pdfjs-dist, qui change son interface et demande d'être testée.
+      isEvalSupported: false,
       // Ces tables servent à décoder les polices non latines : elles évitent
       // que les accents ressortent en caractères illisibles. Elles sont copiées
       // dans les fichiers statiques du site par un greffon de vite.config.ts,
@@ -56,7 +70,14 @@ const extraireDepuisPdf = async (file: File): Promise<string> => {
     }
 
     if (pdf.numPages > PAGES_MAX) {
-      console.warn(`PDF de ${pdf.numPages} pages : seules les ${PAGES_MAX} premières ont été lues.`);
+      // Dit à l'utilisateur ce qui a été laissé de côté. Ce message n'existait
+      // que dans la console : un document de 800 pages était amputé de moitié
+      // sans que rien ne l'indique à l'écran.
+      const message =
+        `Ce PDF compte ${pdf.numPages} pages : seules les ${PAGES_MAX} premières ont été lues. ` +
+        `Découpez le document pour analyser la suite.`;
+      console.warn(message);
+      notifier(message, 'info');
     }
 
     const texte = morceaux.join('\n');

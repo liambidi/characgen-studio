@@ -8,8 +8,10 @@
  * ce SDK. On lui passe a la place ce dont il a besoin en parametre : la fabrique
  * de schemas `Type`, et une fonction `generer` qui sait parler au modele.
  *
- * Interet concret : les consignes envoyees au modele n'existent qu'a un seul
- * endroit. Les modifier ici les modifie partout.
+ * Interet concret : les consignes envoyees au modele, le decoupage du texte, les
+ * plafonds de saisie et la lecture des reponses n'existent qu'a un seul endroit.
+ * Tant qu'ils vivaient en double, les deux copies divergeaient sans que rien ne
+ * le signale, et le bug de troncature silencieuse n'etait corrige que d'un cote.
  */
 
 // ---------------------------------------------------------------------------
@@ -42,21 +44,52 @@ export const estModeleIntrouvable = (e: any): boolean => {
  */
 export const MAGASIN_ANALYSES = "analyses";
 
-/** Plafonds de saisie, verifies avant tout appel facturable. */
+/**
+ * Au dela de cet age, un enregistrement d'analyse ne sert plus a personne : le
+ * navigateur qui l'attendait a abandonne depuis longtemps. Sans ce menage, le
+ * magasin grossissait a chaque import et n'etait jamais vide.
+ */
+export const AGE_MAX_ANALYSE_MS = 60 * 60 * 1_000;
+
+/** Prefixe des compteurs de debit, pour les distinguer des analyses dans le magasin. */
+export const PREFIXE_LIMITE = "limite/";
+
+/**
+ * Plafonds de saisie, verifies avant tout appel facturable.
+ * Le point d'entree est public et devinable : tout ce qui arrive du navigateur
+ * est verifie avant de partir chez Google, pour que personne ne puisse faire
+ * gonfler la facture avec des demandes fabriquees a la main.
+ */
 export const LIMITES = {
   texte: 400_000, // caracteres d'un recit importe
+  prompt: 4_000, // consigne libre ecrite par l'utilisateur
+  image: 12_000_000, // image en base64
+  liste: 200, // nombre de noms ou de titres transmis
+  messages: 60, // longueur d'historique de discussion
 };
+
+// ---------------------------------------------------------------------------
+// Validation des entrees
+// ---------------------------------------------------------------------------
 
 /** Distingue une saisie invalide (a corriger par l'utilisateur) d'une panne serveur. */
 export class ErreurDeSaisie extends Error {}
 
-export const texteValide = (valeur: unknown, nom: string, max: number): string => {
+export const texteValide = (valeur: unknown, nom: string, max: number, obligatoire = true): string => {
   if (valeur === undefined || valeur === null || valeur === "") {
-    throw new ErreurDeSaisie(`${nom} est vide. Importez d'abord un texte.`);
+    if (obligatoire) throw new ErreurDeSaisie(`${nom} est vide. Importez d'abord un texte.`);
+    return "";
   }
   if (typeof valeur !== "string") throw new ErreurDeSaisie(`${nom} n'a pas le format attendu.`);
   if (valeur.length > max) throw new ErreurDeSaisie(`${nom} depasse la taille acceptee (${max} caracteres).`);
   return valeur;
+};
+
+export const listeValide = (valeur: unknown, nom: string): string[] => {
+  if (valeur === undefined || valeur === null) return [];
+  if (!Array.isArray(valeur)) throw new ErreurDeSaisie(`${nom} n'a pas le format attendu.`);
+  if (valeur.length > LIMITES.liste) throw new ErreurDeSaisie(`${nom} contient trop d'elements.`);
+  return valeur.filter((v) => typeof v === "string").map((v) => v.slice(0, 300));
 };
 
 export const nombreValide = (
@@ -71,29 +104,157 @@ export const nombreValide = (
   return Math.min(max, Math.max(min, Math.round(n)));
 };
 
+/**
+ * Types d'images acceptes en entree. Un SVG est un document executable deguise
+ * en image : il n'a rien a faire dans une requete de generation, et le modele
+ * ne sait pas le lire.
+ */
+const TYPES_IMAGE_ACCEPTES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+
+export const imageValide = (valeur: unknown, nom: string, obligatoire = true): string => {
+  const v = texteValide(valeur, nom, LIMITES.image, obligatoire);
+  if (!v) return v;
+
+  const entete = /^data:([^;]+);base64,/.exec(v);
+  if (!entete) throw new ErreurDeSaisie(`${nom} n'est pas une image valide.`);
+  if (!TYPES_IMAGE_ACCEPTES.includes(entete[1].toLowerCase())) {
+    throw new ErreurDeSaisie(`${nom} est dans un format non accepte (${entete[1]}). Utilisez du PNG, du JPEG ou du WebP.`);
+  }
+  return v;
+};
+
+/**
+ * Decompose une image encodee en son type reel et ses donnees.
+ * Le type etait auparavant force a image/png alors que Google renvoie souvent
+ * du JPEG : les images de reference partaient donc mal etiquetees.
+ */
+export const decouperImage = (dataUrl: string): { mimeType: string; data: string } => {
+  const correspondance = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl || "");
+  if (!correspondance) return { mimeType: "image/png", data: (dataUrl || "").split(",")[1] || "" };
+  return { mimeType: correspondance[1], data: correspondance[2] };
+};
+
+/**
+ * Deux noms designent-ils le meme personnage ?
+ *
+ * POURQUOI CE N'EST PAS UN SIMPLE `includes`
+ *
+ * La comparaison etait `a.includes(b) || b.includes(a)` sur les noms en
+ * minuscules. Un personnage nomme "Al" etait donc reconnu dans "Salazar", dans
+ * "Alice" et dans "journal" : sa fiche partait en image de reference pour des
+ * scenes ou il n'apparait pas, et l'illustration montrait le mauvais visage.
+ *
+ * On compare donc sans accents ni casse, et une inclusion n'est retenue que si
+ * elle tombe sur une frontiere de mot et porte sur au moins quatre caracteres,
+ * de quoi reconnaitre "Marie" dans "Marie Dupont" sans reconnaitre "Al" partout.
+ */
+export const normaliserNom = (nom: string): string =>
+  nom
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+
+export const memePersonnage = (a: string, b: string): boolean => {
+  const gauche = normaliserNom(a);
+  const droite = normaliserNom(b);
+  if (!gauche || !droite) return false;
+  if (gauche === droite) return true;
+
+  const [court, long] = gauche.length <= droite.length ? [gauche, droite] : [droite, gauche];
+  if (court.length < 4) return false;
+
+  // Frontiere de mot : "marie" reconnu dans "marie dupont", pas dans "marierait".
+  const echappe = court.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${echappe}([^a-z0-9]|$)`).test(long);
+};
+
 // ---------------------------------------------------------------------------
 // Decoupage du texte
 // ---------------------------------------------------------------------------
 
 export const CHUNK_MAX = 12_000; // ce qu'un seul appel peut lire confortablement
 
-/** Decoupe un texte en morceaux qui respectent les fins de paragraphe. */
+/**
+ * Coupe un paragraphe plus long que la taille cible.
+ *
+ * POURQUOI CETTE FONCTION EXISTE
+ *
+ * Le decoupage se faisait uniquement sur les retours a la ligne. Un fichier texte
+ * colle d'un seul bloc, ou un PDF dont l'extraction n'a produit aucun saut de
+ * ligne, donnait donc UN seul morceau contenant tout le roman. Ce morceau etait
+ * ensuite ramene a 12 000 caracteres par un `slice`, en silence : sur un recit
+ * de 400 000 caracteres, 97 % du livre n'etait jamais lu, et rien ne le disait.
+ *
+ * On coupe donc a la fin de phrase la plus proche, a defaut sur une espace, et
+ * seulement en dernier recours au caractere pres.
+ */
+export const couperParagrapheLong = (paragraphe: string, tailleCible: number): string[] => {
+  if (tailleCible < 1) return [paragraphe];
+
+  const morceaux: string[] = [];
+  let reste = paragraphe;
+  // En dessous de ce seuil la coupure produirait des miettes : mieux vaut alors
+  // couper plus loin, quitte a ce que ce soit au milieu d'une phrase.
+  const minimum = Math.floor(tailleCible * 0.6);
+
+  while (reste.length > tailleCible) {
+    const fenetre = reste.slice(0, tailleCible);
+
+    let coupure = -1;
+    for (const fin of fenetre.matchAll(/[.!?…][")»']?\s/g)) {
+      const position = (fin.index ?? 0) + fin[0].length;
+      if (position >= minimum) coupure = position;
+    }
+
+    if (coupure < 0) {
+      const espace = fenetre.lastIndexOf(" ");
+      coupure = espace >= minimum ? espace + 1 : tailleCible;
+    }
+
+    morceaux.push(reste.slice(0, coupure));
+    reste = reste.slice(coupure);
+  }
+
+  if (reste.length > 0) morceaux.push(reste);
+  return morceaux;
+};
+
+/**
+ * Decoupe un texte en morceaux qui respectent les fins de paragraphe.
+ * Aucun morceau ne depasse la taille cible : c'est cette garantie qui empeche
+ * la troncature silencieuse decrite dans `couperParagrapheLong`.
+ */
 export const decouperEnParagraphes = (texte: string, tailleCible: number): string[] => {
   const paragraphes = texte.split("\n").filter((p) => p.trim().length > 0);
-  if (paragraphes.length === 0) return [texte];
+  if (paragraphes.length === 0) return couperParagrapheLong(texte, tailleCible);
 
   const morceaux: string[] = [];
   let courant = "";
 
+  const deposer = () => {
+    if (courant.length > 0) morceaux.push(courant);
+    courant = "";
+  };
+
   for (const p of paragraphes) {
-    if (courant.length > 0 && courant.length + p.length > tailleCible) {
-      morceaux.push(courant);
+    // Un paragraphe deja plus long que la cible ne peut pas etre accumule :
+    // c'est exactement le cas qui produisait un morceau geant, puis tronque.
+    if (p.length > tailleCible) {
+      deposer();
+      morceaux.push(...couperParagrapheLong(p, tailleCible));
+      continue;
+    }
+
+    if (courant.length > 0 && courant.length + p.length + 1 > tailleCible) {
+      deposer();
       courant = p;
     } else {
       courant = courant.length > 0 ? `${courant}\n${p}` : p;
     }
   }
-  if (courant.length > 0) morceaux.push(courant);
+
+  deposer();
   return morceaux;
 };
 
@@ -167,11 +328,23 @@ export const construireSchemas = (Type: any) => {
     required: ["name", "type", "description", "mood"],
   };
 
-  return { SCHEMA_PERSONNAGE, SCHEMA_ENVIRONNEMENT };
+  const SCHEMA_SCENE = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      location: { type: Type.STRING },
+      environmentDetail: { type: Type.STRING },
+      description: { type: Type.STRING },
+      originalTextExcerpt: { type: Type.STRING },
+      charactersPresent: { type: Type.ARRAY, items: { type: Type.STRING } },
+    },
+  };
+
+  return { SCHEMA_PERSONNAGE, SCHEMA_ENVIRONNEMENT, SCHEMA_SCENE };
 };
 
 // ---------------------------------------------------------------------------
-// Analyse du recit
+// Condensation d'un long passage
 // ---------------------------------------------------------------------------
 
 /** Ce que le fichier a besoin de recevoir pour travailler. */
@@ -187,6 +360,13 @@ export interface OutilsAnalyse {
   progres?: (etape: string) => void | Promise<void>;
 }
 
+/** Ce qu'on garde d'une tranche dont le resume a echoue deux fois de suite. */
+const REPLI_TRANCHE = 2_500;
+
+const CONSIGNE_RESUME =
+  `Resume ce passage de roman en 6 a 10 phrases. Garde les actions concretes, les personnages ` +
+  `presents, les lieux et les details visuels. N'invente rien.`;
+
 /**
  * Condense un long recit avant de l'analyser.
  *
@@ -196,38 +376,67 @@ export interface OutilsAnalyse {
  *
  * Les resumes partent en parallele : c'est la partie la plus longue, et les
  * tranches sont independantes les unes des autres.
+ *
+ * `libelle` sert a nommer l'avancement affiche au navigateur.
  */
-const condenserSegment = async (outils: OutilsAnalyse, segment: string): Promise<string> => {
+export const condenserSegment = async (
+  outils: OutilsAnalyse,
+  segment: string,
+  libelle = "Lecture du recit"
+): Promise<string> => {
   const tranches = decouperEnParagraphes(segment, CHUNK_MAX);
-  if (tranches.length <= 1) return segment.slice(0, CHUNK_MAX);
+
+  // Une seule tranche : elle tient deja dans un appel, il n'y a rien a condenser.
+  // Aucun `slice` ici, c'est lui qui faisait disparaitre les romans d'un bloc.
+  if (tranches.length <= 1) return tranches[0] ?? segment;
 
   let faites = 0;
-  await outils.progres?.(`Lecture du recit : 0 tranche sur ${tranches.length}`);
+  await outils.progres?.(`${libelle} : 0 tranche sur ${tranches.length}`);
 
   const resumes = await Promise.all(
     tranches.map(async (tranche, i) => {
-      try {
-        const r = await outils.generer("texteRapide", {
-          contents:
-            `Resume ce passage de roman en 6 a 10 phrases. Garde les actions concretes, les personnages ` +
-            `presents, les lieux et les details visuels. N'invente rien.\n\nPASSAGE :\n"${tranche.slice(0, CHUNK_MAX)}"`,
-          config: { maxOutputTokens: 900 },
-        });
-        return r.text || tranche.slice(0, 1500);
-      } catch (e) {
-        // Une tranche ratee ne doit pas faire echouer tout le livre : on garde
-        // son debut brut, l'analyse finale s'en accommodera.
-        console.error(`Resume de la tranche ${i} impossible`, e);
-        return tranche.slice(0, 1500);
-      } finally {
-        faites += 1;
-        void outils.progres?.(`Lecture du recit : ${faites} tranches sur ${tranches.length}`);
+      // Un echec passager de Google ne doit pas amputer le livre d'une tranche
+      // entiere : on retente une fois avant de se rabattre sur le texte brut.
+      for (let essai = 0; essai < 2; essai++) {
+        try {
+          const r = await outils.generer("texteRapide", {
+            contents: `${CONSIGNE_RESUME}\n\nPASSAGE :\n"${tranche}"`,
+            config: { maxOutputTokens: 900 },
+          });
+          const resume = r?.text?.trim();
+          if (resume) {
+            faites += 1;
+            void outils.progres?.(`${libelle} : ${faites} tranches sur ${tranches.length}`);
+            return resume;
+          }
+        } catch (e) {
+          console.error(`Resume de la tranche ${i} impossible (essai ${essai + 1})`, e);
+        }
       }
+
+      faites += 1;
+      void outils.progres?.(`${libelle} : ${faites} tranches sur ${tranches.length}`);
+      // Repli : on garde le debut brut de la tranche, l'analyse finale s'en accommode.
+      return tranche.slice(0, REPLI_TRANCHE);
     })
   );
 
   return resumes.join("\n\n");
 };
+
+/**
+ * Prepare un texte pour un appel unique : condense s'il est trop long, tel quel sinon.
+ * Le seuil vaut trois tranches, en dessous duquel resumer couterait plus cher que lire.
+ */
+export const preparerTexte = (
+  outils: OutilsAnalyse,
+  texte: string,
+  libelle?: string
+): Promise<string> | string => (texte.length > CHUNK_MAX * 3 ? condenserSegment(outils, texte, libelle) : texte);
+
+// ---------------------------------------------------------------------------
+// Analyse du recit
+// ---------------------------------------------------------------------------
 
 /**
  * Construit la "bible graphique" du recit : personnages, decors, style suggere.
@@ -240,8 +449,7 @@ export const analyserRecit = async (
   const texte = texteValide(text, "Le texte a analyser", LIMITES.texte);
   const nombre = nombreValide(charCount, "Le nombre de personnages", 1, 60);
 
-  const aAnalyser =
-    texte.length > CHUNK_MAX * 3 ? await condenserSegment(outils, texte) : texte;
+  const aAnalyser = await preparerTexte(outils, texte);
 
   const consigneNombre = nombre
     ? `Identifie exactement ${nombre} personnages, les plus importants, et 5 a 10 lieux cles.`

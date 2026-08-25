@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { sendChatMessage, type ContexteProjet } from '../services/geminiService';
+import { lireImageChoisie, partieImage } from '../services/fichiers';
+import { notifierErreur } from '../services/notifications';
 import { ChatMessage } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -38,13 +40,18 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ contexte }) => {
     return () => window.removeEventListener('keydown', auClavier);
   }, [isOpen]);
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => setSelectedImage(ev.target?.result as string);
-      reader.readAsDataURL(file);
+      // Le champ est vide tout de suite : sans cela, rechoisir le meme fichier
+      // apres un refus ne declencherait aucun evenement.
       e.target.value = '';
+      if (!file) return;
+
+      try {
+          setSelectedImage(await lireImageChoisie(file));
+      } catch (erreur) {
+          notifierErreur("Image non utilisable.", erreur);
+      }
   };
 
   const handleSend = async () => {
@@ -69,8 +76,10 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ contexte }) => {
             .filter(m => m.id !== 'accueil')
             .map(m => ({
                 role: m.role,
+                // Le type reel de l'image est conserve : une photo JPEG annoncee
+                // en PNG pouvait etre refusee par le modele.
                 parts: m.image
-                    ? [{ text: m.text }, { inlineData: { data: m.image.split(',')[1], mimeType: 'image/png' } }]
+                    ? [{ text: m.text }, { inlineData: partieImage(m.image) }]
                     : [{ text: m.text }]
             }));
 

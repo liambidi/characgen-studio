@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Configuration Deno servant UNIQUEMENT a verifier les types de l'Edge Function,",
+    "avec `npm run check:edge`.",
+    "",
+    "POURQUOI ELLE EXISTE",
+    "Le tsconfig du projet exclut netlify/edge-functions : ce code tourne sous Deno,",
+    "importe le SDK Google par URL et utilise le global `Netlify`, trois choses que",
+    "le TypeScript du navigateur ne sait pas resoudre. Consequence : le fichier le",
+    "plus critique du projet, celui qui parle a Google et manipule la cle API,",
+    "n'etait verifie par rien avant d'etre deploye. Une faute de frappe ne se voyait",
+    "qu'une fois en ligne, sur le site reel.",
+    "",
+    "La carte d'imports ci-dessous reproduit celle que Netlify fournit a l'execution.",
+    "Ce fichier n'est lu ni par le build ni par le deploiement : il est nomme",
+    "deno.check.json, et non deno.json, precisement pour ne rien changer a leur",
+    "comportement."
+  ],
+  "lock": false,
+  "imports": {
+    "@netlify/edge-functions": "https://edge.netlify.com/"
+  },
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.window", "dom", "dom.iterable", "esnext"]
+  }
+}

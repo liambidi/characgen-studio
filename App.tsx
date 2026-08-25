@@ -68,6 +68,14 @@ export const BOOK_FORMATS: BookFormat[] = [
 const messageDe = (e: unknown): string =>
     e instanceof Error ? e.message : typeof e === 'string' ? e : 'Erreur inconnue';
 
+/** Ce qu'une sauvegarde enregistre, sans la date, ajoutée au moment de l'écriture. */
+type ProjetASauvegarder = Parameters<typeof saveProjectLocal>[0];
+
+/** Délai d'inactivité avant d'enregistrer automatiquement. */
+const DELAI_SAUVEGARDE_MS = 1_500;
+/** Le même, pendant une génération : l'état change à chaque image terminée. */
+const DELAI_SAUVEGARDE_GENERATION_MS = 8_000;
+
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
   const [titre, setTitre] = useState<string>("");
@@ -101,6 +109,19 @@ const App: React.FC = () => {
   const arretDemandeRef = useRef(false);
   const controleurRef = useRef<AbortController | null>(null);
 
+  /**
+   * Rend le contrôleur d'annulation, mais seulement s'il est encore le nôtre.
+   *
+   * Le champ était remis à null sans condition en fin d'opération. Relancer une
+   * vignette pendant une génération de série suffisait donc à faire perdre au
+   * bouton « Arrêter » la requête qu'il devait interrompre : le clic marquait
+   * bien l'arrêt, mais l'image en cours continuait jusqu'au bout.
+   */
+  const relacherControleur = useCallback((controleur: AbortController) => {
+      if (controleurRef.current === controleur) controleurRef.current = null;
+  }, []);
+
+
   const format = BOOK_FORMATS.find(f => f.id === currentFormatId) || BOOK_FORMATS[0];
 
   useEffect(() => {
@@ -114,24 +135,60 @@ const App: React.FC = () => {
 
   const projetVide = step === AppStep.UPLOAD && characters.length === 0 && scenes.length === 0;
 
+  // Photographie du projet, tenue à jour après chaque rendu. L'écriture s'en sert
+  // au lieu de capturer les variables : elle repart ainsi toujours de l'état le
+  // plus récent, même si elle a été mise en attente.
+  const projetRef = useRef<ProjetASauvegarder | null>(null);
+  useEffect(() => {
+    projetRef.current = { titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId };
+  });
+
+  // Verrou d'écriture. Une sauvegarde recopie TOUT le projet, images comprises,
+  // ce qui représente plusieurs dizaines de mégaoctets en fin de parcours. Sans
+  // ce verrou, une génération qui enchaîne les images empilait autant d'écritures
+  // concurrentes dans IndexedDB, chacune plus lourde que la précédente.
+  const ecritureEnCoursRef = useRef(false);
+  const ecritureADemanderRef = useRef(false);
+
+  const enregistrerProjet = useCallback(async () => {
+    if (ecritureEnCoursRef.current) {
+      // Une écriture tourne déjà : elle reprendra la photographie à jour en sortant.
+      ecritureADemanderRef.current = true;
+      return;
+    }
+
+    ecritureEnCoursRef.current = true;
+    try {
+      do {
+        ecritureADemanderRef.current = false;
+        const instantane = projetRef.current;
+        if (!instantane) break;
+        await saveProjectLocal(instantane);
+      } while (ecritureADemanderRef.current);
+
+      setHasLocal(true);
+      setSauvegardeAuto('faite');
+      mesurerEspace().then(setEspace).catch(() => {});
+    } catch (e) {
+      setSauvegardeAuto('inactive');
+      console.error("Sauvegarde automatique impossible", e);
+    } finally {
+      ecritureEnCoursRef.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     if (projetVide) return;
 
     setSauvegardeAuto('en-cours');
-    const minuterie = setTimeout(async () => {
-      try {
-        await saveProjectLocal({ titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId });
-        setHasLocal(true);
-        setSauvegardeAuto('faite');
-        mesurerEspace().then(setEspace).catch(() => {});
-      } catch (e) {
-        setSauvegardeAuto('inactive');
-        console.error("Sauvegarde automatique impossible", e);
-      }
-    }, 1500);
+    // Pendant une génération, l'état change à chaque image terminée. On espace
+    // alors les écritures : le travail est de toute façon repris en entier à
+    // chaque fois, et rien ne serait perdu entre deux images.
+    const delai = generationEnCours ? DELAI_SAUVEGARDE_GENERATION_MS : DELAI_SAUVEGARDE_MS;
+    const minuterie = setTimeout(() => { void enregistrerProjet(); }, delai);
 
     return () => clearTimeout(minuterie);
-  }, [titre, characters, environments, scenes, stylePrompt, fullText, step, currentFormatId, projetVide]);
+  }, [titre, characters, environments, scenes, stylePrompt, fullText, step, currentFormatId, projetVide, generationEnCours, enregistrerProjet]);
 
   // Filet de sécurité : prévenir avant de fermer pendant une génération.
   useEffect(() => {
@@ -308,7 +365,9 @@ const App: React.FC = () => {
       const titreDeduit = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
       setTitre(titreDeduit);
       setFullText(text);
-      handleStartAnalysis(null, text);
+      // Volontairement non attendu : l'analyse gère son propre indicateur de
+      // chargement et ses propres erreurs, et peut durer plusieurs minutes.
+      void handleStartAnalysis(null, text);
     } catch (err) {
       setError(messageDe(err));
       notifierErreur("Lecture du fichier impossible.", err);
@@ -350,7 +409,7 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
       setProgression("");
-      controleurRef.current = null;
+      relacherControleur(controleur);
     }
   };
 
@@ -495,7 +554,7 @@ const App: React.FC = () => {
       }
     } finally {
       setGenerationEnCours(false);
-      controleurRef.current = null;
+      relacherControleur(controleur);
     }
   };
 
@@ -503,32 +562,35 @@ const App: React.FC = () => {
       const controleur = new AbortController();
       controleurRef.current = controleur;
 
-      if (type === 'char') {
-          const char = characters.find(c => c.id === id);
-          if (!char) return;
-          setCharacters(p => p.map(c => c.id === id ? {...c, status: 'generating', errorMessage: undefined} : c));
-          try {
-            const url = await generateCharacterImage(char, stylePrompt, {...genConfig, aspectRatio: '1:1'}, controleur.signal);
-            setCharacters(p => p.map(c => c.id === id ? {...c, imageUrl: url, status: 'completed', errorMessage: undefined} : c));
-          } catch(e) {
-            if ((e as any)?.name === 'AbortError') return;
-            setCharacters(p => p.map(c => c.id === id ? {...c, status: 'error', errorMessage: messageDe(e)} : c));
-            notifierErreur(`Génération de « ${char.name} » impossible.`, e);
-          }
-      } else {
-          const env = environments.find(e => e.id === id);
-          if (!env) return;
-          setEnvironments(p => p.map(e => e.id === id ? {...e, status: 'generating', errorMessage: undefined} : e));
-          try {
-              const url = await generateEnvironmentImage(env, stylePrompt, genConfig, controleur.signal);
-              setEnvironments(p => p.map(e => e.id === id ? {...e, imageUrl: url, status: 'completed', errorMessage: undefined} : e));
-          } catch(e) {
+      try {
+        if (type === 'char') {
+            const char = characters.find(c => c.id === id);
+            if (!char) return;
+            setCharacters(p => p.map(c => c.id === id ? {...c, status: 'generating', errorMessage: undefined} : c));
+            try {
+              const url = await generateCharacterImage(char, stylePrompt, {...genConfig, aspectRatio: '1:1'}, controleur.signal);
+              setCharacters(p => p.map(c => c.id === id ? {...c, imageUrl: url, status: 'completed', errorMessage: undefined} : c));
+            } catch(e) {
               if ((e as any)?.name === 'AbortError') return;
-              setEnvironments(p => p.map(e => e.id === id ? {...e, status: 'error', errorMessage: messageDe(e)} : e));
-              notifierErreur(`Génération de « ${env.name} » impossible.`, e);
-          }
+              setCharacters(p => p.map(c => c.id === id ? {...c, status: 'error', errorMessage: messageDe(e)} : c));
+              notifierErreur(`Génération de « ${char.name} » impossible.`, e);
+            }
+        } else {
+            const env = environments.find(e => e.id === id);
+            if (!env) return;
+            setEnvironments(p => p.map(e => e.id === id ? {...e, status: 'generating', errorMessage: undefined} : e));
+            try {
+                const url = await generateEnvironmentImage(env, stylePrompt, genConfig, controleur.signal);
+                setEnvironments(p => p.map(e => e.id === id ? {...e, imageUrl: url, status: 'completed', errorMessage: undefined} : e));
+            } catch(e) {
+                if ((e as any)?.name === 'AbortError') return;
+                setEnvironments(p => p.map(e => e.id === id ? {...e, status: 'error', errorMessage: messageDe(e)} : e));
+                notifierErreur(`Génération de « ${env.name} » impossible.`, e);
+            }
+        }
+      } finally {
+          relacherControleur(controleur);
       }
-      controleurRef.current = null;
   };
 
   // --- Scènes -----------------------------------------------------------------
@@ -553,7 +615,7 @@ const App: React.FC = () => {
         setStep(AppStep.GENERATION_HUB);
     } finally {
         setLoading(false);
-        controleurRef.current = null;
+        relacherControleur(controleur);
     }
   };
 
@@ -668,7 +730,7 @@ const App: React.FC = () => {
         }
       } finally {
         setGenerationEnCours(false);
-        controleurRef.current = null;
+        relacherControleur(controleur);
       }
   };
 
@@ -688,7 +750,7 @@ const App: React.FC = () => {
           setScenes(p => p.map(s => s.id === id ? { ...s, status: 'error', errorMessage: messageDe(e) } : s));
           notifierErreur(`Génération de « ${scene.title} » impossible.`, e);
       } finally {
-          controleurRef.current = null;
+          relacherControleur(controleur);
       }
   };
 

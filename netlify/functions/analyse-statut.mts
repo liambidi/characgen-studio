@@ -8,6 +8,11 @@
  *
  * Cette fonction ne fait que lire un tiroir : elle repond en quelques
  * millisecondes et n'approche jamais des limites de duree.
+ *
+ * Elle sait aussi ranger. Avec `?fin=1`, le navigateur signale qu'il a bien recu
+ * le resultat et que l'enregistrement peut disparaitre. Sans ce menage, chaque
+ * import laissait derriere lui un resultat complet, garde indefiniment, et le
+ * magasin ne faisait que grossir.
  */
 import { getStore } from "@netlify/blobs";
 import { MAGASIN_ANALYSES } from "../shared/analyse.ts";
@@ -25,7 +30,9 @@ const json = (corps: unknown, status = 200) =>
   });
 
 export default async (req: Request) => {
-  const identifiant = new URL(req.url).searchParams.get("id") || "";
+  const parametres = new URL(req.url).searchParams;
+  const identifiant = parametres.get("id") || "";
+  const aFini = parametres.get("fin") === "1";
 
   if (!IDENTIFIANT_VALIDE.test(identifiant)) {
     return json({ etat: "erreur", message: "Identifiant d'analyse invalide." }, 400);
@@ -33,6 +40,15 @@ export default async (req: Request) => {
 
   try {
     const magasin = getStore(MAGASIN_ANALYSES);
+
+    // Le navigateur a fini d'exploiter le resultat : on libere la place.
+    // L'expression est validee plus haut, elle ne peut designer qu'un travail,
+    // jamais un compteur de debit (qui porte un prefixe avec une barre oblique).
+    if (aFini) {
+      await magasin.delete(identifiant);
+      return json({ etat: "efface" });
+    }
+
     const etat = await magasin.get(identifiant, { type: "json" });
 
     // Rien dans le tiroir : la fonction d'arriere-plan n'a pas encore eu le temps

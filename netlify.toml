@@ -33,3 +33,28 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Content-Security-Policy = "frame-ancestors 'self' https://*.netlify.app http://localhost:* http://127.0.0.1:*"
+    # L'application n'utilise ni camera, ni micro, ni position, ni paiement.
+    # Le dire ferme ces portes pour tout script tiers qui arriverait un jour.
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+
+# Les fichiers du dossier assets portent une empreinte dans leur nom : un
+# changement de contenu produit un nouveau nom. Ils peuvent donc etre gardes
+# indefiniment par le navigateur. Sans cet en-tete, chaque visite retelechargeait
+# le paquet principal et le lecteur PDF, soit plus d'un megaoctet.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Les tables cmaps de pdf.js ne changent qu'avec la version de la bibliotheque.
+[[headers]]
+  for = "/cmaps/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+# La page d'entree, elle, ne doit jamais etre gardee : c'est elle qui designe
+# la version courante des fichiers empreintes.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

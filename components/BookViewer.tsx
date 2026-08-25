@@ -1,6 +1,4 @@
 import React, { useState } from 'react';
-import JSZip from 'jszip';
-import saveAs from 'file-saver';
 import { Scene, BookFormat } from '../types';
 import { detailImage } from '../services/dataService';
 import { notifier, notifierErreur } from '../services/notifications';
@@ -22,17 +20,32 @@ const mesurerImage = (url: string): Promise<{ largeur: number; hauteur: number }
     img.src = url;
   });
 
+/**
+ * Correspondance entre l'extension réelle d'une image et le nom que jsPDF attend.
+ * Tout ce qui n'est pas listé retombe sur PNG.
+ */
+const FORMATS_JSPDF: Record<string, string> = {
+  jpg: 'JPEG',
+  jpeg: 'JPEG',
+  png: 'PNG',
+  webp: 'WEBP',
+};
+
 const BookViewer: React.FC<BookViewerProps> = ({ scenes, titre, onTitreChange, format, onRestart }) => {
   const completedScenes = scenes.filter(s => s.status === 'completed' && s.imageUrl);
 
   // Mise en page alternée et stable : elle ne doit pas changer entre deux rendus.
-  const [layouts, setLayouts] = useState<Record<string, 'image-top' | 'text-top'>>(() => {
-      const initial: Record<string, 'image-top' | 'text-top'> = {};
-      completedScenes.forEach((s, idx) => {
-          initial[s.id] = idx % 2 === 0 ? 'image-top' : 'text-top';
-      });
-      return initial;
-  });
+  // Seules les inversions demandées à la main sont mémorisées ; l'alternance de
+  // départ se déduit du rang de la planche. L'ancienne version figeait la liste
+  // au montage : une scène illustrée après coup n'y figurait pas et repassait
+  // toutes les suivantes en « image en haut ».
+  const [inversions, setInversions] = useState<Record<string, boolean>>({});
+
+  const dispositionDe = (id: string, index: number): 'image-top' | 'text-top' => {
+      const parDefaut = index % 2 === 0 ? 'image-top' : 'text-top';
+      if (!inversions[id]) return parDefaut;
+      return parDefaut === 'image-top' ? 'text-top' : 'image-top';
+  };
 
   const [exportEnCours, setExportEnCours] = useState(false);
   const [progression, setProgression] = useState(0);
@@ -41,7 +54,7 @@ const BookViewer: React.FC<BookViewerProps> = ({ scenes, titre, onTitreChange, f
   const titreAffiche = titre.trim() || "Sans titre";
 
   const toggleLayout = (id: string) => {
-      setLayouts(prev => ({ ...prev, [id]: prev[id] === 'image-top' ? 'text-top' : 'image-top' }));
+      setInversions(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const handlePrint = () => window.print();
@@ -118,12 +131,16 @@ const BookViewer: React.FC<BookViewerProps> = ({ scenes, titre, onTitreChange, f
           const hFinale = hNat * echelle;
 
           // Le format annoncé doit correspondre au contenu réel, sinon
-          // l'insertion échoue ou produit une image illisible.
-          const format = detailImage(scene.imageUrl).extension === 'jpg' ? 'JPEG' : 'PNG';
+          // l'insertion échoue ou produit une image illisible. Google renvoie
+          // parfois du WebP, qui était jusqu'ici déclaré en PNG.
+          // Autre point : la variable s'appelait `format`, comme le format de
+          // livre reçu en propriété. Deux choses différentes sous un même nom
+          // dans la même fonction, c'était une confusion en attente.
+          const formatImage = FORMATS_JSPDF[detailImage(scene.imageUrl).extension] || 'PNG';
 
           pdf.addImage(
             scene.imageUrl,
-            format,
+            formatImage,
             (largeur - lFinale) / 2,
             marge + (zoneImageHauteur - hFinale) / 2,
             lFinale,
@@ -192,6 +209,14 @@ const BookViewer: React.FC<BookViewerProps> = ({ scenes, titre, onTitreChange, f
    */
   const handleDownloadHTML = async () => {
     try {
+      // Chargées seulement au moment de l'export. Importées en haut du fichier,
+      // ces deux bibliothèques partaient dans le paquet principal et ralentissaient
+      // le premier affichage, alors qu'elles ne servent qu'au bouton Ebook.
+      const [{ default: JSZip }, { default: saveAs }] = await Promise.all([
+        import('jszip'),
+        import('file-saver'),
+      ]);
+
       const zip = new JSZip();
       const dossierImages = zip.folder('images');
 
@@ -358,7 +383,7 @@ ${planches}
             {/* Planches */}
             <div className="flex flex-col bg-white">
                 {completedScenes.map((scene, index) => {
-                    const isImgTop = (layouts[scene.id] || 'image-top') === 'image-top';
+                    const isImgTop = dispositionDe(scene.id, index) === 'image-top';
 
                     return (
                         <div key={scene.id} className="min-h-screen w-full flex flex-col relative group print:break-after-page border-b-8 border-slate-100">
