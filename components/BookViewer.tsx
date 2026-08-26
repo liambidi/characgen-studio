@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Scene, BookFormat } from '../types';
 import { detailImage } from '../services/dataService';
 import { notifier, notifierErreur } from '../services/notifications';
+import { libelleFormat } from '../services/formats';
 
 interface BookViewerProps {
   scenes: Scene[];
@@ -194,7 +195,7 @@ const BookViewer: React.FC<BookViewerProps> = ({ scenes, titre, onTitreChange, f
       const nomFichier = `${titreAffiche.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'Livre'}_${format.id}.pdf`;
       pdf.save(nomFichier);
       setProgression(100);
-      notifier(`PDF créé au format ${format.label}.`);
+      notifier(`PDF créé au format ${libelleFormat(format)}.`);
     } catch (e) {
       notifierErreur("Création du PDF impossible.", e);
     } finally {
@@ -328,7 +329,7 @@ ${planches}
             </button>
           )}
           <p className="text-slate-400 text-sm mt-1">
-            {completedScenes.length} planches · format {format.label}
+            {completedScenes.length} planches · format {libelleFormat(format)}
           </p>
         </div>
 

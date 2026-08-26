@@ -1,5 +1,5 @@
 import LZString from "lz-string";
-import { Character, Scene, Environment, AppStep } from "../types";
+import { Character, Scene, Environment, AppStep, Cadrage, GenConfig } from "../types";
 
 /**
  * Sauvegarde du projet.
@@ -25,6 +25,17 @@ export interface ProjetEnregistre {
   fullText: string;
   currentStep: AppStep;
   formatId?: string;
+  /**
+   * Cadrage et résolution, enregistrés depuis le 2026-08-26.
+   *
+   * Seul `formatId` était conservé, alors qu'il ne suffit plus à décrire ce
+   * qu'on demande à Gemini : la proportion vient du couple format plus cadrage,
+   * et la résolution est devenue réglable. Un projet rouvert repartait donc en
+   * pleine page 1K sans le dire. Les deux champs restent optionnels, pour que
+   * les sauvegardes faites avant cette date se rechargent sans erreur.
+   */
+  cadrage?: Cadrage;
+  resolution?: GenConfig['resolution'];
   misAJourLe: number;
 }
 
@@ -302,6 +313,8 @@ export const importProjectFromJSON = (file: File): Promise<ProjetEnregistre> => 
           fullText: texte,
           currentStep: projet.currentStep ?? AppStep.REVIEW_CHARS,
           formatId: projet.formatId,
+          cadrage: projet.cadrage,
+          resolution: projet.resolution,
           misAJourLe: json.timestamp || Date.now(),
         });
       } catch (e: any) {

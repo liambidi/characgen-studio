@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Character } from '../types';
+import { Character, Importance } from '../types';
+import FiltreImportance, { PastilleImportance, filtrerParImportance } from './FiltreImportance';
 import { notifier, notifierErreur } from '../services/notifications';
 
 interface CharacterReviewProps {
@@ -36,6 +37,10 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
   onRegenerateText,
   onGenerate
 }) => {
+  /** Sélection vide : tout le casting est visible. */
+  const [importances, setImportances] = useState<Importance[]>([]);
+  const visibles = filtrerParImportance(characters, importances);
+
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [addMethod, setAddMethod] = useState<'manual' | 'ai' | 'scan'>('ai');
@@ -184,9 +189,18 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
       <div className="flex flex-col md:flex-row justify-between items-end gap-4 border-b border-white/5 pb-4">
         <div>
              <h2 className="text-3xl font-heading font-bold text-white mb-2">
-                Casting <span className="text-xl text-slate-400 font-normal ml-2">({characters.length})</span>
+                Casting <span className="text-xl text-slate-400 font-normal ml-2">
+                  ({visibles.length === characters.length ? characters.length : `${visibles.length} sur ${characters.length}`})
+                </span>
              </h2>
-             <p className="text-slate-400">Gérez les profils qui composeront votre histoire.</p>
+             <p className="text-slate-400 mb-4 max-w-xl">
+                L'analyse recense tout le monde, figurants compris. Le filtre ne change que l'affichage :
+                supprimez une fiche pour qu'elle ne soit pas illustrée.
+             </p>
+             {/* Le tri appartient à celui qui connaît le récit. Auparavant le
+                 modèle écartait lui-même, sur la consigne « les personnages
+                 importants », et sans jamais dire qui il avait laissé de côté. */}
+             <FiltreImportance elements={characters} actives={importances} onChange={setImportances} />
         </div>
         <button 
             onClick={openAddModal}
@@ -201,7 +215,7 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
         
       {/* Characters Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {characters.map((char) => (
+          {visibles.map((char) => (
             <div key={char.id} className="group glass-card rounded-2xl p-6 hover:bg-surface-highlight/60 transition-all duration-300 relative overflow-hidden">
               
               {/* Actions Overlay */}
@@ -234,9 +248,12 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
                 </div>
                 <div>
                   <h3 className="font-heading font-bold text-xl text-white leading-tight mb-1 group-hover:text-primary transition-colors">{char.name}</h3>
-                  <span className="text-xs font-bold text-secondary uppercase tracking-wider bg-secondary/10 px-2 py-0.5 rounded">
-                    {char.role}
-                  </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-secondary uppercase tracking-wider bg-secondary/10 px-2 py-0.5 rounded">
+                      {char.role}
+                    </span>
+                    <PastilleImportance importance={char.importance} />
+                  </div>
                 </div>
               </div>
               

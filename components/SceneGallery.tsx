@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Scene } from '../types';
 import { detailImage } from '../services/dataService';
+import AvertissementPlanche from './AvertissementPlanche';
 
 interface SceneGalleryProps {
   scenes: Scene[];
@@ -10,9 +11,17 @@ interface SceneGalleryProps {
   onEditImage?: (id: string) => void;
   onStop?: () => void;
   isGenerating: boolean;
+  /**
+   * Proportion réellement demandée à Gemini, par exemple « 2:3 ».
+   *
+   * Les vignettes étaient figées en 16:9 avec un recadrage plein cadre. Depuis
+   * qu'un livre portrait produit des images portrait, ce cadre coupait la
+   * moitié de chaque plan sans le dire.
+   */
+  ratioImage?: string;
 }
 
-const SceneGallery: React.FC<SceneGalleryProps> = ({ scenes, onRestart, onRetry, onNextStep, onEditImage, onStop, isGenerating }) => {
+const SceneGallery: React.FC<SceneGalleryProps> = ({ scenes, onRestart, onRetry, onNextStep, onEditImage, onStop, isGenerating, ratioImage = '16:9' }) => {
   const [erreurOuverte, setErreurOuverte] = useState<string | null>(null);
 
   const downloadImage = (scene: Scene) => {
@@ -88,6 +97,8 @@ const SceneGallery: React.FC<SceneGalleryProps> = ({ scenes, onRestart, onRetry,
         </div>
       </div>
 
+      <AvertissementPlanche className="mb-8" avecRelance />
+
       <div className="space-y-12">
         {scenes.map((scene, index) => (
           <div
@@ -96,14 +107,17 @@ const SceneGallery: React.FC<SceneGalleryProps> = ({ scenes, onRestart, onRetry,
               ${scene.status === 'generating' ? 'ring-2 ring-emerald-500' : ''}`}
           >
              <div className="grid md:grid-cols-2 gap-0">
-                <div className="aspect-video bg-black relative group overflow-hidden">
+                <div
+                  className="bg-black relative group overflow-hidden"
+                  style={{ aspectRatio: ratioImage.replace(':', ' / ') }}
+                >
                     {scene.status === 'completed' && scene.imageUrl ? (
                         <>
                             <img
                                 src={scene.imageUrl}
                                 alt={`Illustration de la scène : ${scene.title}`}
                                 loading="lazy"
-                                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                                className="w-full h-full object-contain transition-transform duration-700 group-hover:scale-105"
                             />
                             <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex items-center justify-center gap-3">
                                 <button

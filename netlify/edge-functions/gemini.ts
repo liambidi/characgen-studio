@@ -110,6 +110,34 @@ const extraireImage = (response: any, quoi: string): string => {
   throw new Error(`${quoi} : aucune image n'a ete produite${raison ? ` (motif : ${raison})` : ""}.`);
 };
 
+/**
+ * Nombre de planches personnage envoyees en reference sur une meme scene.
+ *
+ * Il etait de deux, et les personnages suivants ne recevaient RIEN, ni image ni
+ * description : le modele leur inventait un visage. Trois est un compromis
+ * assume et non mesure : chaque planche supplementaire aide a tenir l'identite,
+ * mais augmente aussi le risque que le modele melange deux visages. Les
+ * personnages au dela partent en description ecrite, ce qui vaut mieux que rien.
+ */
+const REFERENCES_PERSONNAGE_MAX = 3;
+
+/**
+ * Consignes communes a toutes les images du livre.
+ *
+ * Elles sont placees en TETE du prompt, et non en queue comme avant. Un modele
+ * d'image pondere davantage le debut de la consigne : le style arrivait en
+ * derniere ligne, apres l'action et les references, et derivait d'une image a
+ * l'autre.
+ */
+const enTeteArtistique = (style: string): string =>
+  `ART DIRECTION, identical for every image of this book, never drift from it:\n${style}\n`;
+
+/** Ce qu'aucune image du livre ne doit etre, quelle que soit la scene. */
+const INTERDITS_COMMUNS =
+  `Output a single finished illustration. NO text, NO caption, NO watermark, NO panel border, ` +
+  `NO collage, NO split screen, NO grid of thumbnails, NO character sheet layout, ` +
+  `NO multiple views of the same moment.`;
+
 const generateEnvironmentImage = async (env: Environment, stylePrompt: string, config: GenConfig): Promise<string> => {
   if (!env || typeof env !== "object") throw new Error("Le decor transmis est invalide.");
   const style = texteValide(stylePrompt, "Le style artistique", LIMITES.prompt, false) || "Concept art realiste";
@@ -120,16 +148,22 @@ const generateEnvironmentImage = async (env: Environment, stylePrompt: string, c
   }
 
   const fullPrompt = `
-    Concept Art ENVIRONMENT DESIGN for: "${env.name}".
+    ${enTeteArtistique(style)}
+    ENVIRONMENT DESIGN for: "${env.name}".
     VISUAL DESCRIPTION: ${descriptionPart}
     MOOD/ATMOSPHERE: ${env.mood}
     TYPE: ${env.type}
-    ART STYLE: ${style}
     Quality: High detailed, cinematic, production background art.
     NO CHARACTERS. JUST THE SCENERY.
+    ${INTERDITS_COMMUNS}
   `;
 
-  const aspectRatio = config?.aspectRatio === "1:1" ? "16:9" : config?.aspectRatio || "4:3";
+  // Le decor suit le cadrage demande, sans exception. Cette ligne remplacait
+  // silencieusement un cadrage carre par du 16:9, et retombait sur 4:3 des que
+  // rien n'etait transmis. Comme le format n'etait choisi que deux ecrans plus
+  // loin, ce repli etait le cas courant : tous les decors sortaient en 4:3,
+  // quel que soit le format du livre choisi ensuite.
+  const aspectRatio = config?.aspectRatio || "4:3";
 
   const response = await genererAvecRepli("image", {
     contents: { parts: [{ text: fullPrompt }] },
@@ -152,21 +186,28 @@ const generateCharacterImage = async (
     descriptionPart = `CUSTOM USER VISUAL INSTRUCTION (PRIORITY OVERRIDE):\n${character.customVisualPrompt.slice(0, LIMITES.prompt)}\n\n(Base physical description for context if needed: ${descriptionPart})`;
   }
 
+  // La planche est explicitement decrite comme UNE personne vue trois fois.
+  // C'est la meme formulation que celle envoyee aux scenes : le modele doit
+  // comprendre des deux cotes qu'il n'y a qu'un individu sur cette image.
   const fullPrompt = `
-    Concept Art CHARACTER SHEET for: "${character.name}".
-    Generate a wide Character Model Sheet showing THIS CHARACTER in THREE (3) distinct poses on the same image:
-    1. Front View (Neutral standing). 2. Side Profile View. 3. Dynamic Action Pose (reflecting personality).
-    PHYSICAL APPEARANCE & CLOTHING (Keep consistent across all 3 views): ${descriptionPart}
+    ${enTeteArtistique(style)}
+    CHARACTER MODEL SHEET for ONE single person named "${character.name}".
+    Draw THE SAME PERSON three times, side by side on one wide horizontal image:
+    1. Front view, neutral standing. 2. Side profile view. 3. Action pose reflecting personality.
+    These are three views of ONE individual, not three different characters.
+    PHYSICAL APPEARANCE & CLOTHING, strictly identical in the three views: ${descriptionPart}
     PERSONALITY VIBE: ${character.personality}
-    ART STYLE: ${style}
-    BACKGROUND: Pure white background (#FFFFFF).
-    FORMAT: Wide aspect ratio character sheet. High detail, ${config?.resolution || "1K"}.
-    IMPORTANT: OUTPUT ONLY THE IMAGE. NO TEXT LABELS.
+    BACKGROUND: plain white (#FFFFFF), no scenery, no props beyond what the person wears or holds.
+    LAYOUT: the three figures aligned horizontally, full body, evenly spaced, none cropped.
+    Output only the image, no text labels, no name plate, no annotation.
   `;
 
   const response = await genererAvecRepli("image", {
     contents: { parts: [{ text: fullPrompt }] },
-    config: { imageConfig: { imageSize: config?.resolution || "1K", aspectRatio: config?.aspectRatio || "1:1" } },
+    // Une planche a trois figures cote a cote a besoin de largeur. Elle etait
+    // demandee en 1:1 alors que le prompt reclamait un format large, et les
+    // trois vues se marchaient dessus.
+    config: { imageConfig: { imageSize: config?.resolution || "1K", aspectRatio: config?.aspectRatio || "3:2" } },
   });
 
   return extraireImage(response, `Personnage "${character.name}"`);
@@ -185,18 +226,11 @@ const generateSceneImage = async (
   const decors = Array.isArray(allEnvironments) ? allEnvironments : [];
 
   const parts: any[] = [];
-  let refInstructions = "";
+  const consignesReferences: string[] = [];
   let refIndex = 1;
 
-  if (scene.environmentId) {
-    const env = decors.find((e) => e.id === scene.environmentId);
-    if (env && env.imageUrl) {
-      parts.push({ inlineData: decouperImage(env.imageUrl) });
-      refInstructions += `REFERENCE IMAGE #${refIndex} (DECOR/ENVIRONMENT) - LOW PRIORITY: Use only for color palette, texture and architectural style. DO NOT COPY THE LAYOUT if it conflicts with the action.\n`;
-      refIndex++;
-    }
-  }
-
+  // --- Le casting ---------------------------------------------------------
+  //
   // Les noms viennent du modele : rien ne garantit que ce sont tous des chaines.
   // Un `null` dans la liste faisait echouer toute la generation de la scene sur
   // un "Cannot read properties of null", que l'utilisateur voyait en erreur
@@ -205,47 +239,112 @@ const generateSceneImage = async (
     ? scene.charactersPresent.filter((n: unknown): n is string => typeof n === "string" && n.trim().length > 0)
     : [];
 
-  const presentChars = personnages.filter(
+  const presents = personnages.filter(
     (c) =>
       typeof c?.name === "string" &&
-      c.imageUrl &&
-      c.status === "completed" &&
       safeCharsPresent.some((nom: string) => memePersonnage(nom, c.name))
   );
 
-  presentChars.slice(0, 2).forEach((char) => {
-    if (char.imageUrl) {
-      parts.push({ inlineData: decouperImage(char.imageUrl) });
-      refInstructions += `REFERENCE IMAGE #${refIndex} (CHARACTER: ${char.name}) - MEDIUM PRIORITY: Use STRICTLY for facial features and clothing identity. IGNORE THE POSE in this reference image. The pose must come from the TEXT.\n`;
-      refIndex++;
-    }
+  const avecPlanche = presents.filter((c) => c.imageUrl && c.status === "completed");
+  const references = avecPlanche.slice(0, REFERENCES_PERSONNAGE_MAX);
+  // Ceux qui ne rentrent pas dans les references partent en description ecrite.
+  // Avant, au dela de deux personnages, ils ne recevaient rien du tout et le
+  // modele leur inventait un visage.
+  const decrits = presents.filter((c) => !references.includes(c));
+
+  references.forEach((char) => {
+    parts.push({ inlineData: decouperImage(char.imageUrl) });
+    // LA phrase qui manquait. La planche montre trois fois la meme personne, et
+    // le prompt ne le disait nulle part : le modele recopiait donc parfois deux
+    // de ces vues dans la scene, et le personnage se retrouvait dedouble.
+    consignesReferences.push(
+      `REFERENCE #${refIndex} is the CHARACTER MODEL SHEET of ${char.name}. ` +
+        `It shows THE SAME SINGLE PERSON drawn three times (front, profile, action) for identification only. ` +
+        `${char.name} is ONE person, not three. ` +
+        `Take from it the face, the hair and the clothing identity. ` +
+        `Do NOT reproduce its poses, its white background, its layout, or its number of figures.`
+    );
+    refIndex++;
   });
 
-  let textPrompt = "";
-  if (scene.customVisualPrompt && scene.customVisualPrompt.trim().length > 0) {
-    textPrompt = `
-      CUSTOM USER PROMPT (HIGHEST PRIORITY): ${scene.customVisualPrompt.slice(0, LIMITES.prompt)}
-      VISUAL REFERENCES (Use for Style/Identity only): ${refInstructions}
-      ART STYLE: ${style}
-      OUTPUT ONLY THE IMAGE.
-    `;
-  } else {
-    textPrompt = `
-      ROLE: Director of Photography & Cinematic Concept Artist.
-      *** CRITICAL PRIORITY HIERARCHY *** (1 is highest):
-      1. THE NARRATIVE TEXT: the specific action described in "SCENE ACTION" below.
-      2. VISUAL DESCRIPTION: camera angles, lighting, composition.
-      3. CHARACTER IDENTITY (Reference Images): keep facial features/clothing, adapt pose to Priority #1.
-      4. DECOR/ENVIRONMENT (Lowest Priority): use for palette/architecture/mood only.
-      ---
-      SCENE ACTION (THE ABSOLUTE TRUTH): "${String(scene.description || "").slice(0, LIMITES.prompt)}"
-      CONTEXT (NUANCE & EMOTION): "${scene.originalTextExcerpt ? scene.originalTextExcerpt.slice(0, 600) : ""}"
-      SETTING LOCATION: ${scene.location} - ${scene.environmentDetail}
-      VISUAL REFERENCES PROVIDED: ${refInstructions}
-      ART STYLE: ${style}
-      Output: A single high-quality cinematic image.
-    `;
+  // --- Le decor -----------------------------------------------------------
+  //
+  // Par defaut il n'est plus envoye en image. Une image de decor pese bien plus
+  // qu'une phrase demandant de ne pas en copier la composition : le plan se
+  // retrouvait cadre comme le decor, quelle que soit l'action. Il repart en
+  // image seulement si l'utilisateur a coche le verrou sur cette scene.
+  const decor = scene.environmentId ? decors.find((e) => e.id === scene.environmentId) : undefined;
+  const decorVerrouille = Boolean(scene.verrouillerDecor) && Boolean(decor?.imageUrl);
+
+  if (decorVerrouille && decor?.imageUrl) {
+    parts.push({ inlineData: decouperImage(decor.imageUrl) });
+    consignesReferences.push(
+      `REFERENCE #${refIndex} is the LOCKED SET of "${decor.name}". ` +
+        `The user asked for this exact place: keep its architecture, its palette and its materials. ` +
+        `The camera angle and the staging still come from the SCENE ACTION.`
+    );
+    refIndex++;
   }
+
+  const decorEnMots = [
+    scene.location ? `Place: ${scene.location}.` : "",
+    scene.environmentDetail ? `${scene.environmentDetail}` : "",
+    decor && !decorVerrouille ? `${decor.description || ""} Atmosphere: ${decor.mood || ""}` : "",
+  ]
+    .filter((m) => m && m.trim().length > 0)
+    .join(" ")
+    .slice(0, LIMITES.prompt);
+
+  // --- La regle de casting, comptee ---------------------------------------
+  const nomsDuPlan = safeCharsPresent.length > 0 ? safeCharsPresent : presents.map((c) => c.name);
+  const regleCasting =
+    nomsDuPlan.length > 0
+      ? `CASTING RULE, non negotiable: this shot contains exactly ${nomsDuPlan.length} named ` +
+        `character${nomsDuPlan.length > 1 ? "s" : ""}: ${nomsDuPlan.join(", ")}. ` +
+        `Each of them appears EXACTLY ONCE. No duplicate of the same person, no twin, no mirrored copy, ` +
+        `no extra background figure that resembles any of them.`
+      : `CASTING RULE: no named character in this shot. Do not add people unless the action requires them.`;
+
+  const descriptionsEcrites =
+    decrits.length > 0
+      ? `NO REFERENCE IMAGE for the following characters, follow these written descriptions strictly:\n` +
+        decrits
+          .map((c) => `- ${c.name}: ${String(c.physicalDescription || "").slice(0, 600)}`)
+          .join("\n")
+      : "";
+
+  // --- La consigne de l'utilisateur ---------------------------------------
+  //
+  // Elle etait un REMPLACEMENT du prompt entier : ecrire trois mots dans ce
+  // champ effacait la hierarchie de priorite, la regle de casting et les
+  // consignes de reference. C'est desormais un ajout, place au sommet.
+  const consigneUtilisateur = String(scene.customVisualPrompt || "").trim().slice(0, LIMITES.prompt);
+
+  const priorites = [
+    consigneUtilisateur ? "0. USER INSTRUCTION below. It overrides anything that contradicts it." : "",
+    "1. SCENE ACTION below. It is what the image shows.",
+    "2. CASTING RULE below. Never break it.",
+    "3. Character identity taken from the model sheets: face, hair, clothes.",
+    "4. Setting: a place to stage the action in, never a layout to copy.",
+  ].filter(Boolean);
+
+  const textPrompt = `
+${enTeteArtistique(style)}
+ROLE: director of photography and cinematic concept artist.
+
+PRIORITY ORDER, highest first:
+${priorites.join("\n")}
+${consigneUtilisateur ? `\nUSER INSTRUCTION: ${consigneUtilisateur}\n` : ""}
+SCENE ACTION: "${String(scene.description || "").slice(0, LIMITES.prompt)}"
+NARRATIVE CONTEXT, for nuance and emotion only: "${scene.originalTextExcerpt ? scene.originalTextExcerpt.slice(0, 600) : ""}"
+SETTING: ${decorEnMots || "unspecified, infer it from the scene action"}
+
+${regleCasting}
+${descriptionsEcrites}
+${consignesReferences.length > 0 ? `\nREFERENCE IMAGES PROVIDED:\n${consignesReferences.join("\n")}` : ""}
+
+${INTERDITS_COMMUNS}
+  `;
 
   parts.push({ text: textPrompt });
 

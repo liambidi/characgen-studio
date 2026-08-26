@@ -5,6 +5,7 @@ import { notifier } from '../services/notifications';
 // Le fichier partagé ne fait aucun import et n'a aucun effet de bord : seules
 // les deux fonctions utilisées ici partent dans le paquet du navigateur.
 import { memePersonnage } from '../netlify/shared/analyse';
+import AvertissementPlanche from './AvertissementPlanche';
 
 interface SceneReviewProps {
   scenes: Scene[];
@@ -27,10 +28,16 @@ interface SceneReviewProps {
   // New props for environment editing
   onAddEnvironment: (data: any) => Promise<string>; 
   onUpdateEnvironment: (id: string, data: Partial<Environment>) => void;
-  // Format Selection Props
-  selectedFormat: string;
-  onFormatChange: (formatId: string) => void;
-  bookFormats: any[];
+  /**
+   * Le bloc de réglage du format, fourni tel quel par l'application.
+   *
+   * Trois props le décrivaient auparavant, `selectedFormat`, `onFormatChange`
+   * et `bookFormats`, et cet écran dessinait lui-même la grille de dix boutons.
+   * Il n'a aucune raison de connaître les formats : le réglage est désormais un
+   * composant à part, posé aussi avant la génération des décors, et ce fichier
+   * se contente de lui faire une place.
+   */
+  reglagesFormat?: React.ReactNode;
 }
 
 /**
@@ -101,9 +108,7 @@ const SceneReview: React.FC<SceneReviewProps> = ({
   onAutoSort,
   onAddEnvironment,
   onUpdateEnvironment,
-  selectedFormat,
-  onFormatChange,
-  bookFormats
+  reglagesFormat
 }) => {
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
@@ -343,7 +348,22 @@ const SceneReview: React.FC<SceneReviewProps> = ({
                     <div className={`
                         relative bg-surface border border-white/5 rounded-xl p-5 hover:border-white/20 transition-all duration-300
                         ${hasCustomPrompt ? 'border-amber-500/30' : ''}
+                        ${scene.reperageIncertain ? 'border-l-2 border-l-amber-400/70' : ''}
                     `}>
+                         {/* Le serveur savait déjà que la borne de cette scène était
+                             estimée, faute d'avoir retrouvé la citation dans le récit.
+                             L'information ne sortait qu'en console : elle se voit
+                             maintenant là où on peut agir dessus. */}
+                         {scene.reperageIncertain && (
+                            <p className="ml-6 mb-3 text-[11px] text-amber-300/90 flex items-start gap-2">
+                                <i className="fas fa-scissors mt-0.5" aria-hidden="true"></i>
+                                <span>
+                                    Le début de cette scène a été estimé : la citation renvoyée par l'IA
+                                    n'a pas été retrouvée telle quelle dans le récit. Vérifiez que le passage
+                                    commence bien au bon endroit.
+                                </span>
+                            </p>
+                         )}
                          {/* Controls Sidebar */}
                          <div className="absolute left-0 top-0 bottom-0 w-8 flex flex-col items-center justify-center gap-1 border-r border-white/5 bg-black/20 rounded-l-xl">
                             <button
@@ -407,6 +427,29 @@ const SceneReview: React.FC<SceneReviewProps> = ({
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Le décor part en description écrite, pas en image de
+                                référence : une image pèse plus qu'une phrase qui dit
+                                de ne pas en copier le cadrage, et le plan finissait
+                                cadré comme le décor. Cette case rétablit l'ancien
+                                comportement quand on veut vraiment la même pièce. */}
+                            {scene.environmentId && (
+                                <label className="flex items-start gap-2 mb-4 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors w-fit">
+                                    <input
+                                        type="checkbox"
+                                        checked={Boolean(scene.verrouillerDecor)}
+                                        onChange={(e) => onUpdateScene(scene.id, { verrouillerDecor: e.target.checked })}
+                                        className="mt-0.5 accent-primary w-4 h-4 shrink-0"
+                                    />
+                                    <span className="text-[11px] leading-snug max-w-md">
+                                        <span className="font-semibold">Verrouiller ce décor sur son image</span>
+                                        <span className="block opacity-70">
+                                            Par défaut le décor sert de repère écrit, ce qui laisse la caméra suivre
+                                            l'action. Cochez pour retrouver exactement la pièce du décor généré.
+                                        </span>
+                                    </span>
+                                </label>
+                            )}
 
                             <div className="grid lg:grid-cols-2 gap-6">
                                 {/* Left Column: Visuals & Characters */}
@@ -508,52 +551,31 @@ const SceneReview: React.FC<SceneReviewProps> = ({
         })}
       </div>
 
-      {/* Format Selection & Generate Bar */}
-      <div className="mt-12 p-8 bg-surface border border-white/5 rounded-2xl relative overflow-hidden">
-         <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
-         
-         <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-             <div className="flex-1 w-full">
-                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                     <i className="fas fa-cog text-primary" aria-hidden="true"></i> Configuration du Livre
-                 </h3>
-                 
-                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                     {bookFormats.map((format) => (
-                         <button
-                            key={format.id}
-                            onClick={() => onFormatChange(format.id)}
-                            className={`p-3 rounded-lg border text-left transition-all duration-300 flex flex-col gap-1
-                                ${selectedFormat === format.id 
-                                    ? 'bg-primary/20 border-primary text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]' 
-                                    : 'bg-black/20 border-white/5 text-slate-400 hover:border-white/20 hover:text-white'}
-                            `}
-                         >
-                             <div className="flex justify-between items-start">
-                                <i className={`fas ${format.icon} text-sm mb-1 opacity-70`} aria-hidden="true"></i>
-                                {selectedFormat === format.id && <i className="fas fa-check-circle text-primary text-xs" aria-hidden="true"></i>}
-                             </div>
-                             <span className="text-xs font-bold leading-tight">{format.label}</span>
-                             <span className="text-[10px] opacity-50 font-mono">{format.orientation}</span>
-                         </button>
-                     ))}
-                 </div>
-             </div>
+      {/* Réglages du format, puis lancement du storyboard */}
+      <div className="mt-12 flex flex-col gap-6">
+         {reglagesFormat}
 
-             <div className="flex flex-col items-center gap-4 shrink-0">
-                <button
-                    onClick={onGenerateScenes}
-                    className="group relative px-8 py-4 bg-white text-black font-bold text-sm uppercase tracking-wide rounded-full overflow-hidden shadow-2xl hover:scale-105 transition-transform"
-                >
-                    <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-slate-200 to-transparent translate-x-[-100%] group-hover:animate-[shimmer_1.5s_infinite]"></div>
-                    <span className="relative flex items-center gap-2">
-                        <i className="fas fa-film text-lg" aria-hidden="true"></i> Générer le Storyboard
-                    </span>
-                </button>
-                <p className="text-[10px] text-slate-400 text-center max-w-[200px]">
-                    L'IA utilisera le format sélectionné pour toutes les images.
-                </p>
-             </div>
+         <div className="p-8 bg-surface border border-white/5 rounded-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+
+            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+                <AvertissementPlanche className="flex-1 w-full" />
+
+                <div className="flex flex-col items-center gap-4 shrink-0">
+                   <button
+                       onClick={onGenerateScenes}
+                       className="group relative px-8 py-4 bg-white text-black font-bold text-sm uppercase tracking-wide rounded-full overflow-hidden shadow-2xl hover:scale-105 transition-transform"
+                   >
+                       <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-slate-200 to-transparent translate-x-[-100%] group-hover:animate-[shimmer_1.5s_infinite]"></div>
+                       <span className="relative flex items-center gap-2">
+                           <i className="fas fa-film text-lg" aria-hidden="true"></i> Générer le Storyboard
+                       </span>
+                   </button>
+                   <p className="text-[10px] text-slate-400 text-center max-w-[200px]">
+                       Le format et le cadrage réglés ci-dessus s'appliquent à toutes les images.
+                   </p>
+                </div>
+            </div>
          </div>
       </div>
 

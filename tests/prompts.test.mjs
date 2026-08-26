@@ -77,9 +77,17 @@ const outilsFactices = (repondre) => {
 // ---------------------------------------------------------------------------
 // Le recit part entier chez le modele : plus aucune condensation
 //
-// Decision du 25 aout 2026 : les modeles actuels lisent un recit de 400 000
-// caracteres en un appel. Resumer par tranches perdait du detail et coutait des
-// appels. Ces tests garantissent qu'aucun resume intermediaire ne revient.
+// Decision du 25 aout 2026 : plus aucun resume intermediaire. L'ancien code
+// condensait chaque morceau puis jetait le texte d'origine, et le detail
+// disparaissait avec lui.
+//
+// Precision du 26 aout 2026 : le recit est de nouveau parcouru par tranches,
+// mais ce n'est PAS un retour en arriere. Ce qui a ete supprime, c'est le
+// resume ; ce qui existe maintenant, c'est l'envoi du texte BRUT de chaque
+// tranche. Le modele lit donc toujours l'integralite du recit, simplement en
+// plusieurs fois, parce qu'un inventaire demande sur 300 000 caracteres d'un
+// coup revient a une synthese. Les tests ci-dessous gardent les deux exigences :
+// aucune condensation, et une couverture complete.
 // ---------------------------------------------------------------------------
 
 test("la condensation a disparu de tout le code serveur", () => {
@@ -96,6 +104,19 @@ test("la condensation a disparu de tout le code serveur", () => {
 });
 
 test("l'analyse du recit transmet le texte integral au modele", async () => {
+  // CE QUE CE TEST GARDE
+  //
+  // Le bug le plus couteux du projet : le recit etait ramene a 12 000
+  // caracteres par un `slice` silencieux, et 97 % d'un roman n'etaient jamais
+  // lus. Rien ne l'indiquait, la bible graphique paraissait juste pauvre.
+  //
+  // CE QUI A CHANGE LE 2026-08-26
+  //
+  // L'analyse ne tient plus en un seul appel : le recit est inventorie par
+  // tranches, parce qu'un modele a qui on donne un roman entier d'un coup rend
+  // une synthese et non un inventaire. L'exigence, elle, ne bouge pas : la
+  // reunion des prompts doit couvrir le recit en entier. C'est donc la
+  // couverture qui est verifiee, et non plus le nombre d'appels.
   const roman = "Un evenement se produisit dans la maison basse. ".repeat(1_000); // ~47 000 caracteres
   const { requetes, outils } = outilsFactices(() =>
     JSON.stringify({ characters: [], environments: [], suggestedStyle: "test" })
@@ -103,11 +124,32 @@ test("l'analyse du recit transmet le texte integral au modele", async () => {
 
   await analyserRecit(outils, roman);
 
-  assert.equal(requetes.length, 1, "L'analyse doit tenir en un seul appel, sans resume prealable");
+  // Les memes tranches que celles fabriquees par l'analyse, a la meme taille.
+  const tranches = decouperEnParagraphes(roman, 40_000);
+  const prompts = requetes.map((r) => String(r.contents));
+
+  assert.ok(tranches.length > 1, "Un roman de 47 000 caracteres doit produire plusieurs tranches");
+
+  for (const [i, tranche] of tranches.entries()) {
+    assert.ok(
+      prompts.some((p) => p.includes(tranche)),
+      `La tranche ${i + 1} sur ${tranches.length} n'est transmise a aucun appel : une partie du recit n'est pas lue`
+    );
+  }
+
+  // Et rien n'a ete resume avant d'etre envoye : la somme des tranches
+  // transmises fait bien la longueur du roman.
+  const totalTransmis = tranches.reduce((somme, t) => somme + t.length, 0);
   assert.ok(
-    requetes[0].contents.includes(roman),
-    "Le prompt doit contenir le roman entier, sans troncature ni resume"
+    totalTransmis >= roman.trim().length,
+    `Seulement ${totalTransmis} caracteres transmis pour un recit de ${roman.length}`
   );
+});
+
+test("un recit court tient toujours en un seul appel, sans passe de rapprochement inutile", () => {
+  // Le decoupage ne doit pas couter un appel de plus sur un texte qui n'en a
+  // pas besoin : la consolidation ne se declenche qu'a partir de deux tranches.
+  assert.match(PARTAGE, /if \(total > 1\) \{/);
 });
 
 test("aucun prompt ne tronque brutalement le texte du recit", () => {

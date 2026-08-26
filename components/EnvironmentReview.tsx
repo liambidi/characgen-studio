@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Environment, LIBELLE_TYPE_DECOR } from '../types';
+import { Environment, Importance, LIBELLE_TYPE_DECOR } from '../types';
+import FiltreImportance, { PastilleImportance, filtrerParImportance } from './FiltreImportance';
 import { notifier } from '../services/notifications';
 
 interface EnvironmentReviewProps {
@@ -19,6 +20,10 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
   onFindMoreEnvironments,
   onNext
 }) => {
+  /** Sélection vide : tous les décors sont visibles. */
+  const [importances, setImportances] = useState<Importance[]>([]);
+  const visibles = filtrerParImportance(environments, importances);
+
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [addMethod, setAddMethod] = useState<'manual' | 'ai' | 'scan'>('ai');
@@ -93,9 +98,18 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
        <div className="flex justify-between items-end border-b border-white/5 pb-4">
             <div>
                 <h2 className="text-3xl font-heading font-bold text-white mb-2">
-                    Lieux & Décors <span className="text-xl text-slate-400 font-normal ml-2">({environments.length})</span>
+                    Lieux &amp; Décors <span className="text-xl text-slate-400 font-normal ml-2">
+                      ({visibles.length === environments.length ? environments.length : `${visibles.length} sur ${environments.length}`})
+                    </span>
                 </h2>
-                <p className="text-slate-400">Définissez les environnements récurrents où l'action se déroule.</p>
+                {/* « Récurrents » a disparu de cette phrase comme de la consigne
+                    envoyée au modèle : un lieu traversé une seule fois peut très
+                    bien mériter une illustration. */}
+                <p className="text-slate-400 mb-4 max-w-xl">
+                    Tous les lieux du récit sont recensés, même ceux qui n'apparaissent qu'une fois.
+                    Le filtre ne change que l'affichage : supprimez un décor pour qu'il ne soit pas illustré.
+                </p>
+                <FiltreImportance elements={environments} actives={importances} onChange={setImportances} />
             </div>
             <button onClick={openAdd} className="px-6 py-3 bg-surface-highlight hover:bg-white/10 text-white rounded-xl text-sm font-semibold border border-white/10 transition flex items-center gap-2 group">
                 <span className="w-6 h-6 rounded-full bg-green-500/20 text-green-500 flex items-center justify-center group-hover:bg-green-500 group-hover:text-white transition-colors">
@@ -106,7 +120,7 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
        </div>
 
        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-           {environments.map(env => (
+           {visibles.map(env => (
                <div key={env.id} className="bg-surface/50 border border-white/5 rounded-2xl p-6 hover:border-green-500/30 transition group relative">
                    {/* Boutons nommés pour un lecteur d'écran, et visibles sans survol
                        sur écran tactile, où le survol n'existe pas. */}
@@ -128,7 +142,10 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
                            <i className={`fas ${env.type === 'indoor' ? 'fa-home' : env.type === 'space' ? 'fa-rocket' : 'fa-tree'}`} aria-hidden="true"></i>
                        </div>
                        <div>
-                           <h3 className="font-bold text-white text-lg leading-tight">{env.name}</h3>
+                           <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-bold text-white text-lg leading-tight">{env.name}</h3>
+                              <PastilleImportance importance={env.importance} />
+                           </div>
                            <span className="text-xs text-slate-400 uppercase tracking-wider">{LIBELLE_TYPE_DECOR[env.type] || env.type} • {env.mood}</span>
                        </div>
                    </div>

@@ -357,11 +357,17 @@ export const lireJson = (text: string, contexte: string): any => {
  * de deux copies differentes du SDK.
  */
 export const construireSchemas = (Type: any) => {
+  // `importance` a remplace le tri que faisait le modele. On lui demandait
+  // « les personnages importants » et « les decors recurrents » : il ecartait
+  // donc lui-meme, sans dire quoi. Il classe maintenant, et l'interface filtre.
+  const IMPORTANCE = { type: Type.STRING, enum: ["principal", "secondaire", "figurant"] };
+
   const SCHEMA_PERSONNAGE = {
     type: Type.OBJECT,
     properties: {
       name: { type: Type.STRING },
       role: { type: Type.STRING },
+      importance: IMPORTANCE,
       shortDescription: { type: Type.STRING },
       personality: { type: Type.STRING },
       physicalDescription: { type: Type.STRING },
@@ -374,6 +380,7 @@ export const construireSchemas = (Type: any) => {
     properties: {
       name: { type: Type.STRING },
       type: { type: Type.STRING, enum: ["indoor", "outdoor", "space", "abstract"] },
+      importance: IMPORTANCE,
       description: { type: Type.STRING },
       mood: { type: Type.STRING },
     },
@@ -618,8 +625,77 @@ export const construireSegmentsDepuisCarte = (texte: string, citations: string[]
 // ---------------------------------------------------------------------------
 
 /**
+ * Taille d'une tranche de recit pour l'inventaire.
+ *
+ * Le recit partait entier, en un seul appel. Un modele a qui on donne 300 000
+ * caracteres d'un coup rend une synthese, pas un inventaire : il cite les
+ * figures marquantes et laisse tomber le reste, sans jamais dire qu'il a
+ * laisse tomber. Quarante mille caracteres, c'est environ vingt pages, une
+ * longueur sur laquelle il peut encore etre exhaustif.
+ */
+const TAILLE_TRANCHE_INVENTAIRE = 40_000;
+
+/** Tranches inventoriees de front. Meme frein anti-rafale que les scenes. */
+const TRANCHES_EN_PARALLELE = 4;
+
+/** Ordre de tri des importances, du plus lourd au plus leger. */
+const RANG_IMPORTANCE: Record<string, number> = { principal: 0, secondaire: 1, figurant: 2 };
+
+/** La plus lourde des deux importances, quand deux tranches ne s'accordent pas. */
+const importanceLaPlusForte = (a?: string, b?: string): string => {
+  const ra = RANG_IMPORTANCE[a || "secondaire"] ?? 1;
+  const rb = RANG_IMPORTANCE[b || "secondaire"] ?? 1;
+  return ra <= rb ? a || "secondaire" : b || "secondaire";
+};
+
+/**
+ * Fusionne deux fiches du meme personnage ou du meme decor.
+ *
+ * Regle : on garde le texte le plus long de chaque champ. C'est grossier mais
+ * c'est sur, aucune information ne peut disparaitre a la fusion. Demander au
+ * modele de reecrire les fiches fusionnees aurait ete plus fin, et aurait
+ * surtout ouvert la porte a des descriptions raccourcies sans qu'on le voie.
+ */
+const fusionnerFiches = (a: any, b: any): any => {
+  const leplusLong = (x: unknown, y: unknown) => {
+    const sx = typeof x === "string" ? x : "";
+    const sy = typeof y === "string" ? y : "";
+    return sx.length >= sy.length ? sx : sy;
+  };
+  const fusion: any = { ...a };
+  for (const champ of ["role", "shortDescription", "personality", "physicalDescription", "description", "mood"]) {
+    if (champ in a || champ in b) fusion[champ] = leplusLong(a[champ], b[champ]);
+  }
+  fusion.importance = importanceLaPlusForte(a.importance, b.importance);
+  return fusion;
+};
+
+/**
+ * Rapproche mecaniquement les fiches qui designent la meme personne ou le meme
+ * lieu, avant de demander quoi que ce soit au modele.
+ *
+ * Les memes fonctions que le reste du code, `memePersonnage` et `memeLieu`,
+ * pour que le rapprochement obeisse partout a la meme regle.
+ */
+const regrouperFiches = (fiches: any[], memeChose: (a: string, b: string) => boolean): any[] => {
+  const retenues: any[] = [];
+  for (const fiche of fiches) {
+    const nom = String(fiche?.name || "").trim();
+    if (!nom) continue;
+    const index = retenues.findIndex((r) => memeChose(nom, String(r.name)));
+    if (index === -1) retenues.push({ ...fiche, name: nom });
+    else retenues[index] = fusionnerFiches(retenues[index], fiche);
+  }
+  return retenues;
+};
+
+/**
  * Construit la "bible graphique" du recit : personnages, decors, style suggere.
- * Le recit part entier, en un seul appel.
+ *
+ * Le recit est lu par tranches, chacune inventoriee a part, puis les
+ * inventaires sont recolles. Deux passes de rapprochement : une mecanique, sur
+ * les noms, puis une passe de modele pour les doublons deguises, un personnage
+ * appele « le vieil homme » ici et « Maitre Aldric » la.
  */
 export const analyserRecit = async (
   outils: OutilsAnalyse,
@@ -629,52 +705,280 @@ export const analyserRecit = async (
   const texte = texteValide(text, "Le texte a analyser", LIMITES.texte);
   const nombre = nombreValide(charCount, "Le nombre de personnages", 1, 60);
 
-  const consigneNombre = nombre
-    ? `Identifie exactement ${nombre} personnages, les plus importants, et 5 a 10 lieux cles.`
-    : "Identifie TOUS les personnages importants et les Lieux/Decors recurrents.";
-
-  await outils.progres?.("Lecture du recit et redaction de la bible graphique");
-
-  const prompt = `
-    Tu es le Directeur Artistique d'un studio d'animation.
-    Ta mission : creer une "Bible Graphique" complete (Personnages + Decors).
-    1. ${consigneNombre}
-    2. PERSONNAGES : Nom, Role, Personnalite. Description physique EXTREMEMENT PRECISE
-       (age apparent, morphologie, cheveux, yeux, peau, vetements, signes distinctifs).
-    3. ENVIRONNEMENTS (Decors) : Nom, Description visuelle, Type ('indoor'|'outdoor'|'space'|'abstract'), Mood.
-    4. Suggere un style artistique global adapte au ton du recit.
-    N'invente aucun personnage absent du texte.
-
-    TEXTE :
-    "${texte}"
-  `;
-
   const { SCHEMA_PERSONNAGE, SCHEMA_ENVIRONNEMENT } = construireSchemas(outils.Type);
+  const tranches = decouperEnParagraphes(texte, TAILLE_TRANCHE_INVENTAIRE);
+  const total = tranches.length;
 
-  const response = await outils.generer("texteExpert", {
-    contents: prompt,
-    config: {
-      maxOutputTokens: 32768,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: outils.Type.OBJECT,
-        properties: {
-          characters: { type: outils.Type.ARRAY, items: SCHEMA_PERSONNAGE },
-          environments: { type: outils.Type.ARRAY, items: SCHEMA_ENVIRONNEMENT },
-          suggestedStyle: { type: outils.Type.STRING },
+  await outils.progres?.(
+    total > 1
+      ? `Lecture du recit, ${total} parties a inventorier`
+      : "Lecture du recit et redaction de la bible graphique"
+  );
+
+  // --- Passe 1 : inventaire de chaque tranche -------------------------------
+
+  const inventaires: any[] = new Array(total);
+  let faites = 0;
+
+  const inventorier = async (index: number) => {
+    // Aucune consigne de quantite ici, et surtout aucun adjectif qui trie.
+    // « Les personnages importants » et « les decors recurrents » invitaient le
+    // modele a ecarter : c'est exactement ce qu'on lui reprochait.
+    const prompt = `
+      Tu es le Directeur Artistique d'un studio d'animation, et tu depouilles
+      la partie ${index + 1} sur ${total} d'un recit.
+
+      Recense TOUS les personnages qui apparaissent dans CE passage, et TOUS les
+      lieux ou l'action se deroule, sans exception et sans en ecarter aucun.
+      Un personnage qui n'a qu'une replique compte. Un lieu traverse une seule
+      fois compte. Ne juge pas de leur interet, classe-les :
+      - importance "principal" : le passage tourne autour de lui
+      - importance "secondaire" : il agit ou parle, sans porter le passage
+      - importance "figurant" : il est mentionne, present, mais n'agit pas
+
+      PERSONNAGES : Nom tel qu'il apparait dans le texte, Role, Personnalite,
+      et une description physique EXTREMEMENT PRECISE, exploitable telle quelle
+      par un illustrateur : age apparent, morphologie, cheveux, yeux, peau,
+      vetements, signes distinctifs.
+
+      ENVIRONNEMENTS : Nom, description visuelle, type
+      ('indoor' | 'outdoor' | 'space' | 'abstract'), et mood, c'est-a-dire
+      lumiere et atmosphere.
+
+      STYLE ARTISTIQUE que ce passage appelle. Il sera reinjecte MOT POUR MOT en
+      tete de chaque generation d'image : une phrase vague produit un livre qui
+      derive d'une planche a l'autre. Redige-le en anglais, sur une seule ligne,
+      en couvrant ces cinq axes dans cet ordre, separes par des points-virgules :
+      medium (ex : gouache illustration, 3D render, ink and watercolour) ;
+      traitement du trait ; palette dominante, avec des couleurs nommees ;
+      traitement de la lumiere ; niveau de detail.
+
+      N'invente rien qui ne soit pas dans ce passage.
+
+      PASSAGE :
+      "${tranches[index]}"
+    `;
+
+    try {
+      const response = await outils.generer("texteExpert", {
+        contents: prompt,
+        config: {
+          maxOutputTokens: 32768,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: outils.Type.OBJECT,
+            properties: {
+              characters: { type: outils.Type.ARRAY, items: SCHEMA_PERSONNAGE },
+              environments: { type: outils.Type.ARRAY, items: SCHEMA_ENVIRONNEMENT },
+              suggestedStyle: { type: outils.Type.STRING },
+            },
+            required: ["characters", "environments", "suggestedStyle"],
+          },
         },
-        required: ["characters", "environments", "suggestedStyle"],
-      },
-    },
-  });
+      });
+      inventaires[index] = lireJson(response.text || "", `Inventaire, partie ${index + 1}`);
+    } catch (e: any) {
+      // Une tranche perdue ne doit pas emporter tout l'inventaire. On continue,
+      // et on le dit dans les logs plutot que de rendre un resultat ampute en
+      // silence, ce qui etait precisement le defaut d'origine.
+      console.error(`Inventaire de la partie ${index + 1} sur ${total} impossible`, e);
+      inventaires[index] = { characters: [], environments: [], suggestedStyle: "" };
+    }
 
-  const parsed = lireJson(response.text || "", "Analyse du recit");
+    faites += 1;
+    await outils.progres?.(`Inventaire : ${faites} partie${faites > 1 ? "s" : ""} sur ${total}`);
+  };
+
+  let prochaine = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(TRANCHES_EN_PARALLELE, total) }, async () => {
+      while (prochaine < total) {
+        const index = prochaine;
+        prochaine += 1;
+        await inventorier(index);
+      }
+    })
+  );
+
+  const brutPersonnages = inventaires.flatMap((i) => (Array.isArray(i?.characters) ? i.characters : []));
+  const brutDecors = inventaires.flatMap((i) => (Array.isArray(i?.environments) ? i.environments : []));
+  const stylesProposes = inventaires
+    .map((i) => String(i?.suggestedStyle || "").trim())
+    .filter((s) => s.length > 0);
+
+  // Un inventaire vide n'est PAS traite comme une erreur ici. On ne saurait pas
+  // en donner la cause : texte sans personnages, modele muet, tranche refusee
+  // par un filtre. L'ecran de relecture sait deja afficher une liste vide et
+  // proposer d'ajouter a la main, ce qui vaut mieux qu'un message qui affirme
+  // une raison qu'on n'a pas mesuree.
+
+  // --- Rapprochement mecanique ---------------------------------------------
+
+  let personnages = regrouperFiches(brutPersonnages, memePersonnage);
+  let decors = regrouperFiches(brutDecors, memeLieu);
+  let style = stylesProposes[0] || "Concept art realiste";
+
+  // --- Passe 2 : les doublons deguises et le style d'ensemble ---------------
+  //
+  // Elle n'a de sens qu'a partir de deux tranches : sur un texte court, le
+  // rapprochement mecanique suffit et un appel de plus ne serait que du delai.
+  if (total > 1) {
+    await outils.progres?.("Rapprochement des doublons et choix du style");
+    const consolidation = await consoliderBible(outils, personnages, decors, stylesProposes);
+    personnages = consolidation.personnages;
+    decors = consolidation.decors;
+    style = consolidation.style || style;
+  }
+
+  // Le tri par importance sert deux choses : l'interface montre le principal en
+  // premier, et une demande d'un nombre precis coupe par le bas plutot qu'au
+  // hasard de l'ordre d'apparition.
+  const parImportance = (a: any, b: any) =>
+    (RANG_IMPORTANCE[a?.importance] ?? 1) - (RANG_IMPORTANCE[b?.importance] ?? 1);
+  personnages.sort(parImportance);
+  decors.sort(parImportance);
+
+  if (nombre && personnages.length > nombre) {
+    console.warn(
+      `Bible graphique : ${personnages.length} personnages trouves, ${nombre} demandes, ${personnages.length - nombre} ecartes par ordre d'importance.`
+    );
+    personnages = personnages.slice(0, nombre);
+  }
+
   return {
-    characters: parsed.characters || [],
-    environments: parsed.environments || [],
-    suggestedStyle: parsed.suggestedStyle || "Concept art realiste",
+    characters: personnages,
+    environments: decors,
+    suggestedStyle: style,
   };
 };
+
+/**
+ * Reunit les inventaires de toutes les tranches.
+ *
+ * Le modele ne reecrit PAS les fiches, il ne fait que dire lesquelles designent
+ * la meme personne ou le meme lieu, et sous quel nom la retenir. La fusion des
+ * textes se fait ensuite en code. C'est ce qui garantit qu'aucune description
+ * ne peut retrecir en passant par cette etape.
+ */
+const consoliderBible = async (
+  outils: OutilsAnalyse,
+  personnages: any[],
+  decors: any[],
+  styles: string[]
+): Promise<{ personnages: any[]; decors: any[]; style: string }> => {
+  // La charge utile reste courte : des noms et une ligne chacun, jamais les
+  // descriptions physiques completes.
+  const listePersonnages = personnages
+    .map((p, i) => `${i}. ${p.name}, ${String(p.role || "").slice(0, 80)}, ${String(p.shortDescription || "").slice(0, 120)}`)
+    .join("\n");
+  const listeDecors = decors
+    .map((d, i) => `${i}. ${d.name}, ${String(d.description || "").slice(0, 120)}`)
+    .join("\n");
+
+  const SCHEMA_GROUPE = {
+    type: outils.Type.OBJECT,
+    properties: {
+      nomRetenu: { type: outils.Type.STRING },
+      indices: { type: outils.Type.ARRAY, items: { type: outils.Type.INTEGER } },
+      importance: { type: outils.Type.STRING, enum: ["principal", "secondaire", "figurant"] },
+    },
+    required: ["nomRetenu", "indices"],
+  };
+
+  try {
+    const response = await outils.generer("texteExpert", {
+      contents: `
+        Ces listes viennent de plusieurs parties d'un meme recit, depouillees
+        separement. La meme personne y figure parfois plusieurs fois sous des
+        appellations differentes : un prenom d'un cote, un titre ou un surnom de
+        l'autre, « le vieil homme » et « Maitre Aldric ». Idem pour les lieux.
+
+        Pour chaque groupe de lignes qui designent LA MEME personne, ou LE MEME
+        lieu, renvoie un groupe : le nom a retenir, les indices concernes, et
+        l'importance d'ensemble sur tout le recit et non sur une seule partie.
+        Une ligne sans doublon forme un groupe d'un seul indice, ne l'oublie pas.
+        Chaque indice doit apparaitre dans exactement un groupe.
+
+        Ne regroupe que si tu es sur. Deux freres, ou deux salles differentes du
+        meme chateau, restent deux entrees.
+
+        Choisis aussi le STYLE ARTISTIQUE d'ensemble parmi ces propositions, ou
+        redige celui qui les concilie, en gardant la forme en cinq axes separes
+        par des points-virgules :
+        ${styles.map((s) => `- ${s}`).join("\n")}
+
+        PERSONNAGES :
+        ${listePersonnages || "(aucun)"}
+
+        LIEUX :
+        ${listeDecors || "(aucun)"}
+      `,
+      config: {
+        maxOutputTokens: 16384,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: outils.Type.OBJECT,
+          properties: {
+            personnages: { type: outils.Type.ARRAY, items: SCHEMA_GROUPE },
+            decors: { type: outils.Type.ARRAY, items: SCHEMA_GROUPE },
+            style: { type: outils.Type.STRING },
+          },
+          required: ["personnages", "decors"],
+        },
+      },
+    });
+
+    const plan = lireJson(response.text || "", "Rapprochement des doublons");
+
+    /**
+     * Applique le plan de regroupement.
+     *
+     * Toute fiche qu'aucun groupe ne cite est conservee telle quelle. C'est
+     * volontaire : si le modele en oublie une, elle doit rester dans la bible,
+     * pas disparaitre. Cette etape ne peut donc que fusionner, jamais retirer.
+     */
+    const appliquer = (fiches: any[], groupes: any[]): any[] => {
+      const utilises = new Set<number>();
+      const sortie: any[] = [];
+
+      for (const groupe of Array.isArray(groupes) ? groupes : []) {
+        const indices = (Array.isArray(groupe?.indices) ? groupe.indices : [])
+          .map((n: any) => Number(n))
+          .filter((n: number) => Number.isInteger(n) && n >= 0 && n < fiches.length && !utilises.has(n));
+        if (indices.length === 0) continue;
+
+        let fusion = fiches[indices[0]];
+        indices.forEach((n: number) => {
+          utilises.add(n);
+          if (n !== indices[0]) fusion = fusionnerFiches(fusion, fiches[n]);
+        });
+
+        if (groupe.nomRetenu) fusion = { ...fusion, name: String(groupe.nomRetenu) };
+        if (groupe.importance) fusion = { ...fusion, importance: groupe.importance };
+        sortie.push(fusion);
+      }
+
+      fiches.forEach((fiche, n) => {
+        if (!utilises.has(n)) sortie.push(fiche);
+      });
+
+      return sortie;
+    };
+
+    return {
+      personnages: appliquer(personnages, plan.personnages),
+      decors: appliquer(decors, plan.decors),
+      style: String(plan.style || "").trim(),
+    };
+  } catch (e: any) {
+    // Le rapprochement est un confort, pas une condition. S'il echoue, on rend
+    // les fiches deja rapprochees mecaniquement : quelques doublons valent mieux
+    // qu'une analyse perdue.
+    console.error("Rapprochement des doublons impossible, les fiches sont rendues telles quelles", e);
+    return { personnages, decors, style: styles[0] || "" };
+  }
+};
+
 
 // ---------------------------------------------------------------------------
 // Decoupage en scenes, en deux passes
@@ -698,6 +1002,27 @@ export const analyserRecit = async (
  */
 const FICHES_EN_PARALLELE = 4;
 
+/**
+ * Taille d'une tranche pour le reperage des scenes.
+ *
+ * Plus large que pour l'inventaire des personnages : reperer ou une scene
+ * commence demande de suivre le fil du recit, et couper trop court multiplie
+ * les faux debuts au raccord entre deux tranches.
+ */
+const TAILLE_TRANCHE_REPERAGE = 60_000;
+
+/**
+ * Au-dela de ce multiple de la longueur mediane, un segment est suspect.
+ *
+ * Trois est un seuil choisi, pas mesure. Il est volontairement haut : une
+ * relecture inutile coute un appel, alors qu'un seuil trop bas en declencherait
+ * a chaque scene un peu longue.
+ */
+const FACTEUR_SEGMENT_SUSPECT = 3;
+
+/** Plafond de relectures, pour borner le cout. Ce qui est laisse est journalise. */
+const RELECTURES_COUVERTURE_MAX = 5;
+
 /** Une scene ne descend pas en dessous, sinon le decoupage produit des miettes. */
 const SCENES_MIN = 1;
 /** Plafond de securite, aligne sur ce que l'interface autorise. */
@@ -718,16 +1043,43 @@ export const decouperEnScenes = async (
     : [];
 
   // --- Passe 1 : la carte des scenes ---------------------------------------
+  //
+  // Elle tenait en un seul appel sur le recit entier. Sur un roman, le modele
+  // en oubliait, et l'oubli ne laissait AUCUNE trace : les bornes sont
+  // construites entre les citations retenues, donc le passage saute etait
+  // simplement absorbe par la scene precedente, qui devenait deux fois trop
+  // longue sans que rien ne le signale.
+  //
+  // Deux correctifs. Le recit est desormais parcouru par tranches, chacune
+  // reperee a part. Puis les segments obtenus sont mesures : un segment
+  // anormalement long trahit une scene manquee a l'interieur, et declenche un
+  // reperage cible sur ce seul passage.
 
-  await outils.progres?.("Reperage des scenes dans le recit");
+  const tranchesRecit = decouperEnParagraphes(texte, TAILLE_TRANCHE_REPERAGE);
+  const nbTranches = tranchesRecit.length;
 
-  const consigneNombre = voulu
-    ? `Decoupe le recit en EXACTEMENT ${voulu} scenes, en choisissant les ${voulu} moments les plus marquants.`
-    : `Decoupe le recit en autant de scenes qu'il en contient reellement, sans quota impose. ` +
-      `Une scene = une unite d'action continue. Vise entre 5 et 40 scenes selon la longueur.`;
+  await outils.progres?.(
+    nbTranches > 1
+      ? `Reperage des scenes, ${nbTranches} parties a parcourir`
+      : "Reperage des scenes dans le recit"
+  );
 
-  const carteBrute = await outils.generer("texteExpert", {
-    contents: `
+  /** Le quota demande a une tranche, au prorata de sa longueur. */
+  const quotaDeLaTranche = (index: number): number | undefined => {
+    if (!voulu) return undefined;
+    if (nbTranches === 1) return voulu;
+    const part = tranchesRecit[index].length / texte.length;
+    return Math.max(1, Math.round(voulu * part));
+  };
+
+  const repererDans = async (passage: string, quota: number | undefined, etiquette: string): Promise<any[]> => {
+    const consigneNombre = quota
+      ? `Decoupe ce passage en EXACTEMENT ${quota} scene${quota > 1 ? "s" : ""}, en choisissant ${quota > 1 ? `les ${quota} moments les plus marquants` : "le moment le plus marquant"}.`
+      : `Decoupe ce passage en autant de scenes qu'il en contient reellement, sans quota impose. ` +
+        `Une scene = une unite d'action continue.`;
+
+    const brut = await outils.generer("texteExpert", {
+      contents: `
       Tu es scenariste et tu etablis le sequencier d'un recit, avant tout travail d'illustration.
 
       ${consigneNombre}
@@ -746,41 +1098,61 @@ export const decouperEnScenes = async (
         depuis le texte ci-dessous, sans rien changer ni resumer. C'est ce qui permet de
         retrouver le passage : une citation approximative fait rater le decoupage.
 
-      Les scenes doivent se suivre dans l'ordre du texte et couvrir tout le recit,
+      Les scenes doivent se suivre dans l'ordre du texte et couvrir tout ce passage,
       du debut a la fin, sans trou.
 
       TEXTE :
-      "${texte}"
+      "${passage}"
     `,
-    config: {
-      maxOutputTokens: 32768,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: outils.Type.OBJECT,
-        properties: {
-          scenes: {
-            type: outils.Type.ARRAY,
-            items: {
-              type: outils.Type.OBJECT,
-              properties: {
-                title: { type: outils.Type.STRING },
-                location: { type: outils.Type.STRING },
-                charactersPresent: { type: outils.Type.ARRAY, items: { type: outils.Type.STRING } },
-                debutCitation: { type: outils.Type.STRING },
+      config: {
+        maxOutputTokens: 32768,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: outils.Type.OBJECT,
+          properties: {
+            scenes: {
+              type: outils.Type.ARRAY,
+              items: {
+                type: outils.Type.OBJECT,
+                properties: {
+                  title: { type: outils.Type.STRING },
+                  location: { type: outils.Type.STRING },
+                  charactersPresent: { type: outils.Type.ARRAY, items: { type: outils.Type.STRING } },
+                  debutCitation: { type: outils.Type.STRING },
+                },
+                required: ["title", "debutCitation"],
               },
-              required: ["title", "debutCitation"],
             },
           },
+          required: ["scenes"],
         },
-        required: ["scenes"],
       },
-    },
-  });
+    });
 
-  const carte = lireJson(carteBrute.text || "", "Reperage des scenes");
-  const reperees: any[] = Array.isArray(carte.scenes)
-    ? carte.scenes.filter((s: any) => s && typeof s === "object")
-    : [];
+    const carte = lireJson(brut.text || "", `Reperage des scenes${etiquette ? `, ${etiquette}` : ""}`);
+    return Array.isArray(carte.scenes) ? carte.scenes.filter((s: any) => s && typeof s === "object") : [];
+  };
+
+  // Les tranches sont parcourues dans l'ordre : les citations doivent se suivre
+  // dans le sens du recit, sinon le localisateur les traite comme introuvables.
+  let reperees: any[] = [];
+  for (let i = 0; i < nbTranches; i++) {
+    try {
+      const trouvees = await repererDans(
+        tranchesRecit[i],
+        quotaDeLaTranche(i),
+        nbTranches > 1 ? `partie ${i + 1} sur ${nbTranches}` : ""
+      );
+      reperees = reperees.concat(trouvees);
+    } catch (e: any) {
+      // Une tranche perdue laisse un trou que le controle de couverture
+      // ci-dessous rattrapera, plutot que de faire echouer tout le decoupage.
+      console.error(`Reperage de la partie ${i + 1} sur ${nbTranches} impossible`, e);
+    }
+    if (nbTranches > 1) {
+      await outils.progres?.(`Reperage des scenes : ${i + 1} partie${i > 0 ? "s" : ""} sur ${nbTranches}`);
+    }
+  }
 
   if (reperees.length === 0) {
     throw new Error(
@@ -788,10 +1160,64 @@ export const decouperEnScenes = async (
     );
   }
 
-  const segments = construireSegmentsDepuisCarte(
+  let segments = construireSegmentsDepuisCarte(
     texte,
     reperees.map((s) => String(s.debutCitation || ""))
   );
+
+  // --- Controle de couverture ----------------------------------------------
+  //
+  // C'est le correctif de l'oubli invisible. Un segment tres au-dessus de la
+  // mediane contient presque toujours une scene que la carte a sautee. On y
+  // renvoie un reperage, et les scenes trouvees viennent s'inserer.
+  //
+  // Il ne tourne pas quand un nombre exact de scenes a ete demande : en ajouter
+  // reviendrait a ne pas tenir la promesse faite a l'utilisateur.
+  if (!voulu && segments.length > 0) {
+    const longueurs = segments.map((s) => s.fin - s.debut).sort((a, b) => a - b);
+    const mediane = longueurs[Math.floor(longueurs.length / 2)];
+    const suspects = segments
+      .map((s, i) => ({ i, taille: s.fin - s.debut }))
+      .filter((s) => s.taille > mediane * FACTEUR_SEGMENT_SUSPECT)
+      .sort((a, b) => b.taille - a.taille);
+
+    const aRelire = suspects.slice(0, RELECTURES_COUVERTURE_MAX);
+    if (suspects.length > aRelire.length) {
+      console.warn(
+        `Couverture : ${suspects.length} passages trop longs reperes, seuls les ${aRelire.length} plus gros sont relus.`
+      );
+    }
+
+    for (const suspect of aRelire) {
+      const segment = segments[suspect.i];
+      await outils.progres?.("Relecture d'un passage trop long, recherche de scenes oubliees");
+      try {
+        const trouvees = await repererDans(texte.slice(segment.debut, segment.fin), undefined, "passage trop long");
+        // La premiere scene rendue redit le debut du segment, deja connu.
+        const nouvelles = trouvees.slice(1);
+        if (nouvelles.length > 0) {
+          console.warn(
+            `Couverture : ${nouvelles.length} scene(s) retrouvee(s) dans un passage de ${suspect.taille} caracteres.`
+          );
+          reperees = reperees.concat(nouvelles);
+        }
+      } catch (e: any) {
+        console.error("Relecture d'un passage trop long impossible", e);
+      }
+    }
+
+    // Les citations retrouvees sont reinjectees dans l'ordre du recit, et les
+    // bornes recalculees d'un coup : c'est le localisateur qui remet tout en
+    // place, on ne bricole pas les segments a la main.
+    const localiser = creerLocalisateur(texte);
+    const citations = reperees
+      .map((s) => ({ citation: String(s.debutCitation || ""), repere: s }))
+      .map((c) => ({ ...c, position: localiser(c.citation) }))
+      .sort((a, b) => (a.position < 0 ? 1 : b.position < 0 ? -1 : a.position - b.position));
+
+    reperees = citations.map((c) => c.repere);
+    segments = construireSegmentsDepuisCarte(texte, citations.map((c) => c.citation));
+  }
 
   const nombreApprochees = segments.filter((s) => s.approche).length;
   if (nombreApprochees > 0) {
@@ -849,6 +1275,9 @@ export const decouperEnScenes = async (
       fiche = {
         title: meta.title || repere.title || `Scene ${index + 1}`,
         location: lieu,
+        // Le doute sur le decoupage ne restait qu'en `console.warn`, donc nulle
+        // part pour qui utilise l'application. Il suit maintenant la scene.
+        reperageIncertain: segment.approche === true,
         environmentId: decorCorrespondant(lieu),
         environmentDetail: meta.environmentDetail || "",
         description: meta.description || "Description non generee.",
@@ -869,6 +1298,7 @@ export const decouperEnScenes = async (
       fiche = {
         title: `${repere.title || `Scene ${index + 1}`} (a reprendre)`,
         location: lieu,
+        reperageIncertain: segment.approche === true,
         environmentId: decorCorrespondant(lieu),
         environmentDetail: "",
         description: `Redaction impossible : ${e?.message || "erreur inconnue"}. Modifiez cette scene a la main ou relancez.`,
@@ -945,8 +1375,11 @@ export const trouverPersonnagesManquants = async (
 
   const response = await outils.generer("texteExpert", {
     contents: `
-      Analyse le TEXTE ci-dessous et trouve ${combien ? `exactement ${combien}` : "les"} personnages
+      Analyse le TEXTE ci-dessous et trouve ${combien ? `exactement ${combien}` : "TOUS les"} personnages
       qui ne figurent PAS dans cette liste : ${connus.join(", ") || "(aucun pour l'instant)"}.
+      N'ecarte personne parce qu'il te parait secondaire : un personnage qui n'a qu'une
+      replique compte. Classe-les au lieu de les trier, avec importance "principal",
+      "secondaire" ou "figurant".
       Attention aux doublons deguises : un personnage deja liste sous un surnom ou un titre ne doit pas etre repropose.
       ${indices ? `Indices donnes par l'utilisateur, a suivre en priorite : ${indices}` : ""}
       Pour chacun, donne une description physique tres precise, exploitable par un illustrateur.
@@ -987,9 +1420,11 @@ export const trouverDecorsManquants = async (
 
   const response = await outils.generer("texteExpert", {
     contents: `
-      Analyse le TEXTE ci-dessous et trouve ${combien ? `exactement ${combien}` : "les"} lieux ou decors importants
+      Analyse le TEXTE ci-dessous et trouve ${combien ? `exactement ${combien}` : "TOUS les"} lieux ou decors
       qui ne figurent PAS dans cette liste : ${connus.join(", ") || "(aucun pour l'instant)"}.
-      Privilegie les decors recurrents, ceux ou l'action revient plusieurs fois.
+      N'ecarte pas un lieu parce qu'il n'apparait qu'une fois : un decor traverse une seule
+      fois peut tres bien meriter une illustration. Classe-les au lieu de les trier, avec
+      importance "principal", "secondaire" ou "figurant".
       ${indices ? `Indices donnes par l'utilisateur, a suivre en priorite : ${indices}` : ""}
       N'invente aucun lieu absent du texte. Si tu n'en trouves aucun, renvoie une liste vide.
 

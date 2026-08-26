@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import {
     saveProjectLocal,
@@ -28,9 +28,11 @@ import AnalysisConfigModal from './components/AnalysisConfigModal';
 import ChatAssistant from './components/ChatAssistant';
 import ImageEditorModal from './components/ImageEditorModal';
 import CentreNotifications from './components/CentreNotifications';
+import ChoixFormat from './components/ChoixFormat';
 
-import { AppStep, Character, Environment, Scene, AnalysisResult, GenConfig, BookFormat } from './types';
+import { AppStep, Character, Environment, Scene, AnalysisResult, GenConfig, Cadrage } from './types';
 import { extractTextFromFile } from './services/pdfService';
+import { BOOK_FORMATS, formatParId, ratioPourCadrage } from './services/formats';
 import {
   analyzeStory,
   generateCharacterImage,
@@ -47,22 +49,22 @@ import {
 } from './services/geminiService';
 
 /**
- * Formats de livre proposés. Les dimensions en millimètres servent à fabriquer
- * un PDF au bon format : auparavant, le choix ne changeait que les proportions
- * des images et l'export restait bloqué en A4 portrait.
+ * Le catalogue des formats a quitté ce fichier le 2026-08-26 pour
+ * `services/formats.ts`. Il y portait un ratio d'image écrit à la main par
+ * format, faux dans neuf cas sur dix, et identique pour quatre formats sur
+ * cinq : dix boutons ne produisaient que quatre images différentes. La
+ * proportion se calcule désormais à partir des millimètres.
  */
-export const BOOK_FORMATS: BookFormat[] = [
-    { id: 'a4_p', label: 'Format A4 (21 x 29.7 cm)', ratio: '3:4', orientation: 'Portrait', icon: 'fa-file', largeurMm: 210, hauteurMm: 297 },
-    { id: 'moyen_p', label: 'Format Moyen (16 x 24 cm)', ratio: '3:4', orientation: 'Portrait', icon: 'fa-book', largeurMm: 160, hauteurMm: 240 },
-    { id: 'a5_p', label: 'Format Roman / A5 (15 x 21 cm)', ratio: '3:4', orientation: 'Portrait', icon: 'fa-book-open', largeurMm: 150, hauteurMm: 210 },
-    { id: 'digest_p', label: 'Format Digest (14 x 21.6 cm)', ratio: '3:4', orientation: 'Portrait', icon: 'fa-passport', largeurMm: 140, hauteurMm: 216 },
-    { id: 'poche_p', label: 'Livre de Poche (11 x 18 cm)', ratio: '9:16', orientation: 'Portrait', icon: 'fa-mobile-alt', largeurMm: 110, hauteurMm: 180 },
-    { id: 'a4_l', label: 'A4 à l\'italienne (29.7 x 21 cm)', ratio: '4:3', orientation: 'Paysage', icon: 'fa-image', largeurMm: 297, hauteurMm: 210 },
-    { id: 'moyen_l', label: 'Moyen à l\'italienne (24 x 16 cm)', ratio: '4:3', orientation: 'Paysage', icon: 'fa-image', largeurMm: 240, hauteurMm: 160 },
-    { id: 'a5_l', label: 'Roman / A5 à l\'italienne (21 x 15 cm)', ratio: '4:3', orientation: 'Paysage', icon: 'fa-image', largeurMm: 210, hauteurMm: 150 },
-    { id: 'digest_l', label: 'Digest à l\'italienne (21.6 x 14 cm)', ratio: '4:3', orientation: 'Paysage', icon: 'fa-image', largeurMm: 216, hauteurMm: 140 },
-    { id: 'poche_l', label: 'Poche à l\'italienne (18 x 11 cm)', ratio: '16:9', orientation: 'Paysage', icon: 'fa-tv', largeurMm: 180, hauteurMm: 110 },
-];
+
+/**
+ * Proportion des planches personnage, indépendante du format du livre.
+ *
+ * Une planche montre le personnage trois fois côte à côte : elle a besoin de
+ * largeur. Elle était pourtant demandée en 1:1, alors que le prompt réclamait
+ * un format large, et l'écran la recadrait ensuite en 3:4. Trois choix qui se
+ * contredisaient, et à l'arrivée on ne voyait qu'un tiers de la planche.
+ */
+const RATIO_PLANCHE: GenConfig['aspectRatio'] = '3:2';
 
 /** Message d'erreur lisible, quelle que soit la forme de l'exception. */
 const messageDe = (e: unknown): string =>
@@ -131,8 +133,15 @@ const App: React.FC = () => {
   // Etape en cours de l'analyse, alimentee par la fonction d'arriere-plan.
   const [progression, setProgression] = useState<string>("");
 
-  const [genConfig, setGenConfig] = useState<GenConfig>({ resolution: '1K', aspectRatio: '4:3' });
+  /**
+   * Réglages d'image. La proportion n'est plus saisie : elle découle du format
+   * choisi et du cadrage demandé, et se recalcule dès que l'un des deux bouge.
+   * La résolution, elle, était figée à 1K sans que rien ne permette d'en
+   * changer, y compris pour un A4 destiné à l'impression.
+   */
   const [currentFormatId, setCurrentFormatId] = useState<string>('a4_l');
+  const [cadrage, setCadrage] = useState<Cadrage>('pleine-page');
+  const [resolution, setResolution] = useState<GenConfig['resolution']>('1K');
 
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [hasLocal, setHasLocal] = useState(false);
@@ -174,7 +183,26 @@ const App: React.FC = () => {
   }, []);
 
 
-  const format = BOOK_FORMATS.find(f => f.id === currentFormatId) || BOOK_FORMATS[0];
+  const format = formatParId(currentFormatId);
+
+  /**
+   * La configuration envoyée à Gemini, déduite et non saisie.
+   *
+   * C'est ce qui empêche le décalage d'autrefois : le format était choisi à
+   * l'écran des scènes, mais les décors étaient déjà générés avec la valeur par
+   * défaut. Le calcul étant ici, tout écran qui génère une image utilise la même
+   * proportion, quel que soit le moment où le réglage a été touché.
+   */
+  const genConfig: GenConfig = useMemo(
+    () => ({ resolution, aspectRatio: ratioPourCadrage(format, cadrage) }),
+    [resolution, format, cadrage]
+  );
+
+  /** Sert à prévenir avant un changement de format qui ne reprendra rien. */
+  const imagesDejaGenerees =
+    characters.filter(c => c.status === 'completed').length +
+    environments.filter(e => e.status === 'completed').length +
+    scenes.filter(s => s.status === 'completed').length;
 
   useEffect(() => {
     hasLocalSave().then(setHasLocal).catch(() => setHasLocal(false));
@@ -192,7 +220,7 @@ const App: React.FC = () => {
   // plus récent, même si elle a été mise en attente.
   const projetRef = useRef<ProjetASauvegarder | null>(null);
   useEffect(() => {
-    projetRef.current = { titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId };
+    projetRef.current = { titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId, cadrage, resolution };
   });
 
   // Verrou d'écriture. Une sauvegarde recopie TOUT le projet, images comprises,
@@ -262,12 +290,12 @@ const App: React.FC = () => {
     return () => { window.removeEventListener('keydown', auClavier); window.removeEventListener('mousedown', auClic); };
   }, [showSaveMenu]);
 
+  /**
+   * Ne fait plus que retenir le format. La proportion d'image en découle, elle
+   * n'est plus recopiée dans un état parallèle qui pouvait diverger.
+   */
   const handleFormatChange = (formatId: string) => {
-      const f = BOOK_FORMATS.find(item => item.id === formatId);
-      if (f) {
-          setCurrentFormatId(formatId);
-          setGenConfig(prev => ({ ...prev, aspectRatio: f.ratio }));
-      }
+      if (BOOK_FORMATS.some(item => item.id === formatId)) setCurrentFormatId(formatId);
   };
 
   // --- Sauvegarde et fichiers -------------------------------------------------
@@ -275,7 +303,7 @@ const App: React.FC = () => {
   const handleSaveLocal = async () => {
     if (projetVide) { notifier("Il n'y a rien à sauvegarder pour l'instant.", 'info'); return; }
     try {
-        await saveProjectLocal({ titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId });
+        await saveProjectLocal({ titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId, cadrage, resolution });
         setHasLocal(true);
         notifier("Projet sauvegardé dans ce navigateur.");
         setShowSaveMenu(false);
@@ -287,7 +315,7 @@ const App: React.FC = () => {
   const handleExportJSON = async () => {
       if (projetVide) { notifier("Il n'y a rien à exporter pour l'instant.", 'info'); return; }
       try {
-        await exportProjectToJSON({ titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId });
+        await exportProjectToJSON({ titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId, cadrage, resolution });
         const poids = estimerPoidsProjet(characters, environments, scenes, fullText);
         notifier(`Fichier projet téléchargé (${formaterOctets(poids)} environ).`);
         setShowSaveMenu(false);
@@ -338,6 +366,10 @@ const App: React.FC = () => {
           setStylePrompt(data.stylePrompt || "");
           setFullText(data.fullText || "");
           if (data.formatId) handleFormatChange(data.formatId);
+          // Cadrage et resolution suivent le format : sans eux, un projet
+          // rouvert repartait en pleine page 1K sans le signaler.
+          if (data.cadrage) setCadrage(data.cadrage);
+          if (data.resolution) setResolution(data.resolution);
           setStep(data.currentStep ?? AppStep.REVIEW_CHARS);
           notifier("Projet importé.");
       } catch (err) {
@@ -368,6 +400,10 @@ const App: React.FC = () => {
             setStylePrompt(data.stylePrompt || "");
             setFullText(data.fullText || "");
             if (data.formatId) handleFormatChange(data.formatId);
+          // Cadrage et resolution suivent le format : sans eux, un projet
+          // rouvert repartait en pleine page 1K sans le signaler.
+          if (data.cadrage) setCadrage(data.cadrage);
+          if (data.resolution) setResolution(data.resolution);
             setStep(data.currentStep ?? AppStep.REVIEW_CHARS);
             notifier("Sauvegarde restaurée.");
         } else {
@@ -636,7 +672,7 @@ const App: React.FC = () => {
         async (char) => {
           setCharacters(p => p.map(c => c.id === char.id ? { ...c, status: 'generating', errorMessage: undefined } : c));
           try {
-            const imageUrl = await generateCharacterImage(char, stylePrompt, { ...genConfig, aspectRatio: '1:1' }, controleur.signal);
+            const imageUrl = await generateCharacterImage(char, stylePrompt, { ...genConfig, aspectRatio: RATIO_PLANCHE }, controleur.signal);
             setCharacters(p => p.map(c => c.id === char.id ? { ...c, imageUrl, status: 'completed', errorMessage: undefined } : c));
           } catch (e) {
             // Une annulation n'est pas un échec : la vignette est remise en
@@ -688,7 +724,7 @@ const App: React.FC = () => {
             if (!char) return;
             setCharacters(p => p.map(c => c.id === id ? {...c, status: 'generating', errorMessage: undefined} : c));
             try {
-              const url = await generateCharacterImage(char, stylePrompt, {...genConfig, aspectRatio: '1:1'}, controleur.signal);
+              const url = await generateCharacterImage(char, stylePrompt, {...genConfig, aspectRatio: RATIO_PLANCHE}, controleur.signal);
               setCharacters(p => p.map(c => c.id === id ? {...c, imageUrl: url, status: 'completed', errorMessage: undefined} : c));
             } catch(e) {
               if ((e as any)?.name === 'AbortError') return;
@@ -1200,7 +1236,22 @@ const App: React.FC = () => {
                 />
             </div>
           ) : step === AppStep.REVIEW_ENVIRONMENTS ? (
-            <div className="py-8">
+            <div className="py-8 flex flex-col gap-8">
+                {/* Le format se choisit ICI, et non plus deux écrans plus loin.
+                    C'est le dernier moment avant la première image : les décors
+                    partaient jusqu'ici en 4:3 par défaut, puis le format était
+                    demandé après coup, sans que rien ne signale la contradiction. */}
+                <ChoixFormat
+                    formats={BOOK_FORMATS}
+                    formatId={currentFormatId}
+                    cadrage={cadrage}
+                    resolution={resolution}
+                    onFormatChange={handleFormatChange}
+                    onCadrageChange={setCadrage}
+                    onResolutionChange={setResolution}
+                    imagesDejaGenerees={imagesDejaGenerees}
+                    sousTitre="À fixer maintenant : la génération commence à l'écran suivant, et une image déjà produite garde son cadrage."
+                />
                 <EnvironmentReview
                     environments={environments}
                     onRemoveEnvironment={handleRemoveEnvironment}
@@ -1258,9 +1309,20 @@ const App: React.FC = () => {
                         onAutoSort={handleAutoSort}
                         onAddEnvironment={async (data) => (await handleAddEnvironment('manual', data)) as string}
                         onUpdateEnvironment={handleUpdateEnvironment}
-                        selectedFormat={currentFormatId}
-                        onFormatChange={handleFormatChange}
-                        bookFormats={BOOK_FORMATS}
+                        reglagesFormat={
+                            <ChoixFormat
+                                formats={BOOK_FORMATS}
+                                formatId={currentFormatId}
+                                cadrage={cadrage}
+                                resolution={resolution}
+                                onFormatChange={handleFormatChange}
+                                onCadrageChange={setCadrage}
+                                onResolutionChange={setResolution}
+                                imagesDejaGenerees={imagesDejaGenerees}
+                                titre="Format du livre, dernière vérification"
+                                sousTitre="Le réglage est celui choisi avant les décors. Le changer ici ne touchera que les images qui restent à produire."
+                            />
+                        }
                     />
                 </div>
               )
@@ -1278,6 +1340,7 @@ const App: React.FC = () => {
              <div className="py-8">
                 <SceneGallery
                     scenes={scenes}
+                    ratioImage={genConfig.aspectRatio}
                     onRestart={handleRestart}
                     onRetry={handleRetryScene}
                     onNextStep={() => setStep(AppStep.FINAL_BOOK)}

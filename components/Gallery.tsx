@@ -162,14 +162,18 @@ const Gallery: React.FC<GalleryProps> = ({
             className={`group bg-surface-highlight/30 border border-white/5 rounded-2xl overflow-hidden shadow-lg transition-all duration-500 hover:shadow-2xl hover:border-white/10
               ${item.status === 'generating' ? 'ring-1 ring-primary/50' : ''}`}
           >
-            <div className={`relative overflow-hidden bg-dark ${activeTab === 'envs' ? 'aspect-video' : 'aspect-[3/4]'}`}>
+            {/* La carte d'un personnage suit désormais la proportion de sa
+                planche, qui est large parce qu'elle aligne trois vues. Elle
+                était affichée en 3/4 avec un recadrage plein cadre : on ne
+                voyait que la vue du milieu, les deux autres étaient coupées. */}
+            <div className={`relative overflow-hidden bg-dark ${activeTab === 'envs' ? 'aspect-video' : 'aspect-[3/2]'}`}>
               {item.status === 'completed' && item.imageUrl ? (
                 <>
                   <img
                     src={item.imageUrl}
                     alt={activeTab === 'chars' ? `Fiche du personnage ${item.name}` : `Décor ${item.name}`}
                     loading="lazy"
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    className={`w-full h-full transition-transform duration-700 group-hover:scale-105 ${activeTab === 'chars' ? 'object-contain' : 'object-cover'}`}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-dark via-transparent to-transparent opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
                      <div className="flex justify-center gap-2 flex-wrap">
