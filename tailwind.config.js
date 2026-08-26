@@ -22,9 +22,12 @@ export default {
         // les bordures concernees ne s'affichaient pas.
         border: 'rgba(255, 255, 255, 0.10)',
       },
+      // Les familles portent le suffixe « Variable » : c'est le nom que declarent
+      // les fichiers installes avec le projet. « Inter » sans suffixe est garde
+      // juste derriere, au cas ou la police soit deja presente sur la machine.
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-        heading: ['Outfit', 'sans-serif'],
+        sans: ['Inter Variable', 'Inter', 'system-ui', 'sans-serif'],
+        heading: ['Outfit Variable', 'Outfit', 'system-ui', 'sans-serif'],
       },
       animation: {
         blob: 'blob 7s infinite',

@@ -1,9 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Scene, Character, Environment } from '../types';
 import { notifier } from '../services/notifications';
+// La même règle de rapprochement des noms que le serveur, prise à sa source.
+// Le fichier partagé ne fait aucun import et n'a aucun effet de bord : seules
+// les deux fonctions utilisées ici partent dans le paquet du navigateur.
+import { memePersonnage } from '../netlify/shared/analyse';
 
 interface SceneReviewProps {
   scenes: Scene[];
+  /**
+   * Etape en cours quand des scenes arrivent encore, chaine vide sinon.
+   *
+   * L'ecran s'ouvre des la premiere scene prete : sans ce bandeau, on croirait
+   * que le decoupage n'a trouve que trois scenes alors qu'il en fabrique encore.
+   */
+  enCours?: string;
   allCharacters: Character[];
   allEnvironments: Environment[];
   onRemoveScene: (id: string) => void;
@@ -22,8 +33,63 @@ interface SceneReviewProps {
   bookFormats: any[];
 }
 
+/**
+ * Champ de saisie qui ne remonte sa valeur qu'en sortant.
+ *
+ * POURQUOI CE COMPOSANT EXISTE
+ *
+ * Les champs du séquencier écrivaient directement dans l'état du projet, à
+ * chaque caractère tapé. Or cet état porte aussi les images encodées : sur un
+ * projet de vingt scènes illustrées, taper une phrase dans le texte original
+ * relançait le rendu complet de l'application vingt fois par seconde, et
+ * remettait à zéro le minuteur de sauvegarde à chaque frappe.
+ *
+ * La frappe reste maintenant locale au champ. La valeur ne remonte qu'à la
+ * sortie du champ, ou à la touche Entrée pour une ligne simple.
+ */
+const ChampDiffere: React.FC<{
+  valeur: string;
+  onValider: (valeur: string) => void;
+  multiligne?: boolean;
+  className?: string;
+  placeholder?: string;
+  'aria-label'?: string;
+}> = ({ valeur, onValider, multiligne, ...reste }) => {
+  const [brouillon, setBrouillon] = useState(valeur);
+
+  // La valeur peut changer sans passer par ce champ : réordonnancement des
+  // scènes, import d'un projet, recherche de scènes manquantes.
+  useEffect(() => setBrouillon(valeur), [valeur]);
+
+  const valider = () => {
+    if (brouillon !== valeur) onValider(brouillon);
+  };
+
+  if (multiligne) {
+    return (
+      <textarea
+        {...reste}
+        value={brouillon}
+        onChange={(e) => setBrouillon(e.target.value)}
+        onBlur={valider}
+      />
+    );
+  }
+
+  return (
+    <input
+      {...reste}
+      value={brouillon}
+      onChange={(e) => setBrouillon(e.target.value)}
+      onBlur={valider}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+    />
+  );
+};
+
 const SceneReview: React.FC<SceneReviewProps> = ({
   scenes,
+  enCours = '',
   allCharacters,
   allEnvironments = [],
   onRemoveScene,
@@ -226,13 +292,35 @@ const SceneReview: React.FC<SceneReviewProps> = ({
         </div>
       </div>
 
+      {enCours && (
+        <div
+            className="flex items-center gap-3 p-4 rounded-xl bg-primary/10 border border-primary/40"
+            role="status"
+            aria-live="polite"
+        >
+            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></div>
+            <div>
+                <p className="text-white text-sm font-bold">D'autres scènes sont encore en cours d'écriture</p>
+                <p className="text-primary text-xs font-mono mt-0.5">{enCours}</p>
+                <p className="text-slate-400 text-xs mt-1">
+                    Vous pouvez déjà relire et corriger celles qui sont là, vos modifications sont conservées.
+                </p>
+            </div>
+        </div>
+      )}
+
       <div className="space-y-4">
         {scenes.map((scene, index) => {
             // BUG FIX: Handle case where charactersPresent is undefined
             const safeCharsPresent = scene.charactersPresent || [];
             
-            const matchedChars = allCharacters.filter(c => 
-                safeCharsPresent.some(name => name.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(name.toLowerCase()))
+            // Le rapprochement se faisait ici par inclusion croisée des noms en
+            // minuscules. Un personnage nommé « Al » était donc reconnu dans
+            // « Salazar », dans « Alice » et dans « journal » : l'écran annonçait
+            // des présences que le serveur, lui, refuse depuis qu'il compare sur
+            // une frontière de mot. Les deux côtés répondent maintenant pareil.
+            const matchedChars = allCharacters.filter(c =>
+                safeCharsPresent.some(name => typeof name === 'string' && memePersonnage(name, c.name))
             );
             const hasCustomPrompt = scene.customVisualPrompt && scene.customVisualPrompt.trim().length > 0;
             const wordCount = scene.originalTextExcerpt ? scene.originalTextExcerpt.trim().split(/\s+/).length : 0;
@@ -258,28 +346,50 @@ const SceneReview: React.FC<SceneReviewProps> = ({
                     `}>
                          {/* Controls Sidebar */}
                          <div className="absolute left-0 top-0 bottom-0 w-8 flex flex-col items-center justify-center gap-1 border-r border-white/5 bg-black/20 rounded-l-xl">
-                            <button onClick={() => onMoveScene(scene.id, 'up')} disabled={index === 0} className="w-full h-8 flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-20 transition">
+                            <button
+                                onClick={() => onMoveScene(scene.id, 'up')}
+                                disabled={index === 0}
+                                aria-label={`Remonter la scène ${scene.title}`}
+                                className="w-full h-8 flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-20 transition"
+                            >
                                 <i className="fas fa-chevron-up text-xs" aria-hidden="true"></i>
                             </button>
                             <span className="text-[10px] font-mono text-slate-400 font-bold">{index + 1}</span>
-                            <button onClick={() => onMoveScene(scene.id, 'down')} disabled={index === scenes.length - 1} className="w-full h-8 flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-20 transition">
+                            <button
+                                onClick={() => onMoveScene(scene.id, 'down')}
+                                disabled={index === scenes.length - 1}
+                                aria-label={`Descendre la scène ${scene.title}`}
+                                className="w-full h-8 flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-20 transition"
+                            >
                                 <i className="fas fa-chevron-down text-xs" aria-hidden="true"></i>
                             </button>
                          </div>
 
-                        <div className="absolute top-4 right-4 flex gap-3 opacity-0 group-hover/item:opacity-100 transition-opacity z-20">
-                            <button onClick={() => openEditModal(scene)} className="w-8 h-8 rounded bg-black/50 text-slate-400 hover:text-white flex items-center justify-center hover:bg-black transition" title="Paramètres avancés"><i className="fas fa-cog text-xs" aria-hidden="true"></i></button>
-                            <button onClick={() => onRemoveScene(scene.id)} className="w-8 h-8 rounded bg-black/50 text-slate-400 hover:text-red-400 flex items-center justify-center hover:bg-black transition"><i className="fas fa-trash text-xs" aria-hidden="true"></i></button>
+                        {/* Boutons nommés pour un lecteur d'écran, et visibles sans survol
+                            sur écran tactile, où le survol n'existe pas. */}
+                        <div className="absolute top-4 right-4 flex gap-3 opacity-0 max-sm:opacity-100 group-hover/item:opacity-100 group-focus-within/item:opacity-100 transition-opacity z-20">
+                            <button
+                                onClick={() => openEditModal(scene)}
+                                aria-label={`Paramètres avancés de la scène ${scene.title}`}
+                                title="Paramètres avancés"
+                                className="w-8 h-8 rounded bg-black/50 text-slate-400 hover:text-white flex items-center justify-center hover:bg-black transition"
+                            ><i className="fas fa-cog text-xs" aria-hidden="true"></i></button>
+                            <button
+                                onClick={() => onRemoveScene(scene.id)}
+                                aria-label={`Supprimer la scène ${scene.title}`}
+                                className="w-8 h-8 rounded bg-black/50 text-slate-400 hover:text-red-400 flex items-center justify-center hover:bg-black transition"
+                            ><i className="fas fa-trash text-xs" aria-hidden="true"></i></button>
                         </div>
 
                         <div className="ml-8 flex flex-col gap-4">
                             {/* Header Inline Edit */}
                             <div className="flex flex-col sm:flex-row sm:items-center gap-3 border-b border-white/5 pb-3">
-                                <input 
+                                <ChampDiffere
                                     className="flex-1 bg-transparent border-none text-base font-bold text-white focus:ring-0 placeholder-slate-600 p-0"
-                                    value={scene.title}
-                                    onChange={(e) => onUpdateScene(scene.id, { title: e.target.value })}
+                                    valeur={scene.title}
+                                    onValider={(titre) => onUpdateScene(scene.id, { title: titre })}
                                     placeholder="Titre de la scène"
+                                    aria-label={`Titre de la scène ${index + 1}`}
                                 />
                                 <div className="relative group/env shrink-0 min-w-[200px]">
                                     <select
@@ -307,11 +417,13 @@ const SceneReview: React.FC<SceneReviewProps> = ({
                                             Description Visuelle (Prompt)
                                             <span className="text-[9px] opacity-50"><i className="fas fa-pen mr-1" aria-hidden="true"></i> Editable</span>
                                         </span>
-                                        <textarea
+                                        <ChampDiffere
+                                            multiligne
                                             className="w-full bg-dark/50 rounded-lg p-3 border border-white/5 text-xs text-slate-300 leading-relaxed focus:border-primary focus:outline-none resize-none min-h-[100px] transition-colors hover:bg-dark/70"
-                                            value={scene.description}
-                                            onChange={(e) => onUpdateScene(scene.id, { description: e.target.value })}
+                                            valeur={scene.description}
+                                            onValider={(description) => onUpdateScene(scene.id, { description })}
                                             placeholder="Décrivez l'action et le visuel..."
+                                            aria-label={`Description visuelle de la scène ${index + 1}`}
                                         />
                                     </div>
                                     
@@ -366,11 +478,13 @@ const SceneReview: React.FC<SceneReviewProps> = ({
                                              {wordCount} mots
                                          </span>
                                      </div>
-                                     <textarea 
+                                     <ChampDiffere
+                                        multiligne
                                         className="w-full flex-1 min-h-[160px] bg-[#fffbf0]/5 hover:bg-[#fffbf0]/10 focus:bg-[#fffbf0]/10 border border-emerald-500/30 rounded-lg p-4 text-sm font-serif text-slate-300 focus:outline-none focus:border-emerald-500/50 transition-colors resize-none leading-relaxed"
-                                        value={scene.originalTextExcerpt}
-                                        onChange={(e) => onUpdateScene(scene.id, { originalTextExcerpt: e.target.value })}
+                                        valeur={scene.originalTextExcerpt}
+                                        onValider={(texte) => onUpdateScene(scene.id, { originalTextExcerpt: texte })}
                                         placeholder="Le texte complet doit apparaître ici..."
+                                        aria-label={`Texte original de la scène ${index + 1}`}
                                      />
                                 </div>
                             </div>

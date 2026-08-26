@@ -27,12 +27,40 @@
 # dans une iframe, et cet en-tete ne sait dire que "tout le monde" ou "personne",
 # ALLOW-FROM n'etant plus supporte par les navigateurs. C'est frame-ancestors qui
 # designe les sites autorises, ici le portfolio en ligne et le developpement local.
+#
+# LA POLITIQUE COMPLETE, POUR L'INSTANT EN MODE SIGNALEMENT
+#
+# L'en-tete Content-Security-Policy ne contenait que `frame-ancestors`. Ni
+# default-src, ni script-src, ni connect-src : rien ne limitait donc d'ou la page
+# pouvait charger du code, ni vers ou elle pouvait envoyer des donnees. C'est
+# genant pour une application dont le travail consiste a ouvrir des documents
+# fournis par l'utilisateur.
+#
+# La politique complete est ecrite ci-dessous en `Report-Only` : le navigateur
+# signale dans sa console ce qu'elle bloquerait, sans rien bloquer. Une politique
+# trop serree casse une page en silence, et cela ne se verrait qu'en ligne.
+#
+# QUAND LA RENDRE ACTIVE : apres avoir parcouru le site en entier, import de PDF
+# compris, sans voir de ligne "Content Security Policy" dans la console du
+# navigateur. Il suffira alors de renommer la cle en Content-Security-Policy et
+# de supprimer la ligne frame-ancestors qui la precede, devenue redondante.
+#
+# CE QUE CHAQUE DIRECTIVE AUTORISE
+#   default-src 'self'   rien n'est charge d'ailleurs que ce domaine, par defaut
+#   script-src           le paquet compile, plus le worker de pdf.js
+#   worker-src blob:     pdf.js demarre son worker depuis un blob
+#   style-src unsafe-inline  React ecrit des styles en attribut (`style={{...}}`)
+#   font-src / img-src   polices installees avec le site, images encodees en data:
+#   connect-src 'self'   les appels IA vont vers /api/gemini, meme domaine
+#   object-src 'none'    aucun greffon, aucun contenu embarque
+#
 [[headers]]
   for = "/*"
   [headers.values]
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Content-Security-Policy = "frame-ancestors 'self' https://*.netlify.app http://localhost:* http://127.0.0.1:*"
+    Content-Security-Policy-Report-Only = "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://*.netlify.app http://localhost:* http://127.0.0.1:*"
     # L'application n'utilise ni camera, ni micro, ni position, ni paiement.
     # Le dire ferme ces portes pour tout script tiers qui arriverait un jour.
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"

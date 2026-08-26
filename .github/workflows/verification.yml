@@ -1,0 +1,63 @@
+# Lance les vérifications du projet à chaque poussée.
+#
+# POURQUOI CE FICHIER EXISTE
+#
+# `npm run verify` enchaîne quatre contrôles, et le README demande de le lancer
+# après toute modification du dossier netlify. Rien ne le lançait : le dépôt
+# n'avait aucun workflow, et un déploiement partait chez Netlify que la
+# vérification ait été faite ou non. Un oubli ne se voyait donc qu'en ligne.
+#
+# Les quatre contrôles sont séparés en étapes distinctes, plutôt que regroupés
+# dans un seul `npm run verify` : quand ça casse, le nom de l'étape en rouge dit
+# tout de suite lequel des quatre a lâché, sans avoir à lire le journal.
+
+name: Vérifications
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Permet de relancer à la main depuis l'onglet Actions, par exemple après
+  # avoir corrigé une variable d'environnement.
+  workflow_dispatch:
+
+jobs:
+  verifier:
+    name: Types, tests et compilation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          # pdfjs-dist 6 réclame Node 22.13 ou plus récent.
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Installer les dépendances
+        # `npm ci` installe exactement ce que décrit package-lock.json, sans
+        # jamais le modifier : deux exécutions donnent le même résultat.
+        run: npm ci
+
+      - name: Vérifier les types du navigateur et des fonctions Node
+        run: npm run type-check
+
+      - name: Installer Deno
+        # L'Edge Function est exclue du tsconfig : elle tourne sous Deno, importe
+        # le SDK Google par URL et utilise le global `Netlify`. C'est le fichier
+        # le plus sensible du projet, le seul à manipuler la clé API.
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Vérifier les types de l'Edge Function
+        run: npm run check:edge
+
+      - name: Lancer les tests
+        run: npm test
+
+      - name: Compiler le site
+        run: npm run build

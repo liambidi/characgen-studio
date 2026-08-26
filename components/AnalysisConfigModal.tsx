@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 
 interface AnalysisConfigModalProps {
   type: 'character' | 'scene';
+  /** Longueur du récit importé, en caractères. Sert à proposer un nombre de scènes. */
+  longueurRecit?: number;
   onConfirm: (count: number | null) => void;
   onCancel: () => void;
 }
@@ -10,13 +12,48 @@ interface AnalysisConfigModalProps {
  * Le serveur ramène silencieusement toute demande hors bornes dans cet
  * intervalle. Les afficher ici évite qu'on saisisse 500 scènes et qu'on en
  * obtienne 60 sans comprendre pourquoi.
+ *
+ * Le plafond de 9 scènes qui figurait ici a disparu le 2026-08-25. Il gardait
+ * l'ancien découpage, qui tournait sur une fonction coupée vers 35 secondes.
+ * Depuis que l'étape est passée sur la fonction d'arrière-plan et ses 15
+ * minutes, ce seuil n'avait plus de fondement : le laisser aurait fait dire à
+ * l'interface le contraire de ce que le serveur sait faire.
  */
 const QUANTITE_MIN = 1;
 const QUANTITE_MAX = 60;
 
-const AnalysisConfigModal: React.FC<AnalysisConfigModalProps> = ({ type, onConfirm, onCancel }) => {
+/**
+ * Longueur de récit qui justifie en gros une scène.
+ *
+ * Sert seulement à proposer un ordre de grandeur dans le mode « Automatique
+ * chiffré ». Le vrai découpage ne divise plus le texte : c'est le modèle qui
+ * repère où les scènes commencent, au changement de lieu, de moment ou de
+ * personnages.
+ */
+const CARACTERES_PAR_SCENE = 7_000;
+
+/** Conversion approximative en pages, pour que le chiffre parle à quelqu'un. */
+const CARACTERES_PAR_PAGE = 1_800;
+
+/** Ce que la longueur du récit laisse attendre, à titre indicatif. */
+const scenesJustifiees = (longueur: number) =>
+  Math.max(4, Math.min(QUANTITE_MAX, Math.round(longueur / CARACTERES_PAR_SCENE)));
+
+const AnalysisConfigModal: React.FC<AnalysisConfigModalProps> = ({ type, longueurRecit, onConfirm, onCancel }) => {
+  const pourScenes = type === 'scene';
+  const longueur = longueurRecit ?? 0;
+  const connaitLeRecit = pourScenes && longueur > 0;
+
+  // Un ordre de grandeur, plus un plafond de sécurité : depuis que le découpage
+  // tourne sur la fonction d'arrière-plan et ses 15 minutes, le nombre de scènes
+  // n'est plus limité par le temps accordé au serveur.
+  const justifiees = scenesJustifiees(longueur);
+  const pages = Math.max(1, Math.round(longueur / CARACTERES_PAR_PAGE));
+
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
-  const [count, setCount] = useState<number>(type === 'character' ? 5 : 10);
+  const [count, setCount] = useState<number>(
+    type === 'character' ? 5 : connaitLeRecit ? justifiees : 10
+  );
 
   const boutonRef = useRef<HTMLButtonElement>(null);
 
@@ -33,7 +70,13 @@ const AnalysisConfigModal: React.FC<AnalysisConfigModalProps> = ({ type, onConfi
   const borner = (valeur: number) => Math.min(QUANTITE_MAX, Math.max(QUANTITE_MIN, valeur));
 
   const handleConfirm = () => {
-      onConfirm(mode === 'auto' ? null : borner(count));
+      if (mode === 'manual') return onConfirm(borner(count));
+
+      // « Automatique » renvoie null : le serveur laisse alors le modèle décider
+      // du nombre de scènes d'après la structure du récit. Un nombre calculé ici
+      // par division redonnerait le découpage arithmétique qu'on vient de
+      // supprimer, et couperait des scènes en deux.
+      onConfirm(null);
   };
 
   const titre = type === 'character' ? 'Analyse des personnages' : 'Analyse des scènes';
@@ -78,7 +121,19 @@ const AnalysisConfigModal: React.FC<AnalysisConfigModalProps> = ({ type, onConfi
                 </span>
                 <span>
                     <span className="text-white font-bold text-sm block">Automatique (recommandé)</span>
-                    <span className="text-xs text-slate-400">L'IA détecte tous les éléments importants.</span>
+                    <span className="text-xs text-slate-400">
+                        {pourScenes
+                            ? connaitLeRecit
+                                ? `L'IA découpe où les scènes commencent vraiment. Votre récit fait ${pages} page${pages > 1 ? 's' : ''} environ, comptez ${justifiees} scènes à peu près.`
+                                : "L'IA découpe le récit là où les scènes commencent vraiment."
+                            : "L'IA détecte tous les éléments importants."}
+                    </span>
+                    {pourScenes && (
+                        <span className="text-xs text-slate-500 block mt-2">
+                            Recommandé : le nombre suit alors la structure de l'histoire au lieu d'être
+                            imposé, ce qui évite qu'une scène soit coupée en deux pour tenir le compte.
+                        </span>
+                    )}
                 </span>
             </label>
 
@@ -139,6 +194,16 @@ const AnalysisConfigModal: React.FC<AnalysisConfigModalProps> = ({ type, onConfi
 
                         <span className="text-[11px] text-slate-400">sur {QUANTITE_MAX} au maximum</span>
                     </div>
+                )}
+
+                {/* Un nombre imposé force le découpage à respecter le compte,
+                    quitte à réunir deux scènes ou à en couper une. Le dire, sans
+                    l'interdire : c'est parfois exactement ce qu'on veut. */}
+                {pourScenes && mode === 'manual' && (
+                    <p className="text-xs text-amber-300/90 mt-3 pl-10">
+                        Avec un nombre imposé, l'IA s'y tient : elle regroupe ou divise des moments du
+                        récit pour tomber juste. Le découpage automatique suit mieux l'histoire.
+                    </p>
                 )}
             </div>
         </fieldset>

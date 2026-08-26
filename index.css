@@ -6,6 +6,23 @@
 @import '@fortawesome/fontawesome-free/css/fontawesome.css';
 @import '@fortawesome/fontawesome-free/css/solid.css';
 
+/*
+  Polices du site, servies depuis le projet.
+
+  Elles etaient chargees depuis fonts.googleapis.com a chaque visite : c'etait le
+  dernier service exterieur du projet, alors que Tailwind, les icones et le
+  lecteur de PDF avaient tous ete rapatries. Deux consequences, l'une technique,
+  l'autre non : le premier affichage dependait de la disponibilite de Google, et
+  chaque visiteur declarait son passage a Google sans l'avoir demande.
+
+  Ce sont les versions variables : un seul fichier couvre tous les graisses de
+  100 a 900, la ou il fallait auparavant huit fichiers distincts. Les regles
+  `unicode-range` de ces feuilles font que le navigateur ne telecharge que le
+  jeu latin, les alphabets grec et cyrillique restant inutilises.
+*/
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/outfit/wght.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

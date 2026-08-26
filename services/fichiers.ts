@@ -41,12 +41,80 @@ export const TAILLE_MAX_IMAGE = 8 * 1024 * 1024;
 export const formaterTaille = (octets: number): string =>
   octets < 1024 * 1024 ? `${Math.round(octets / 1024)} Ko` : `${(octets / (1024 * 1024)).toFixed(1)} Mo`;
 
+/** Signale en interne un fichier dont la lecture a depasse le plafond. */
+class TropVolumineux extends Error {}
+
 /**
- * Verifie qu'un fichier peut servir de recit. Leve une erreur lisible sinon.
+ * Lit un fichier en s'arretant net des que le plafond est franchi.
+ *
+ * Le flux est consomme morceau par morceau plutot que d'un bloc : c'est ce qui
+ * permet d'abandonner un fichier de 300 Mo apres 25 Mo lus, au lieu de le
+ * charger entier en memoire et de figer l'onglet. C'est exactement la
+ * protection que l'ancien controle sur `file.size` assurait, sauf que celui-ci
+ * ne peut plus rien assurer quand la taille annoncee est fausse.
+ */
+const lireAuPlusPlafond = async (file: File, plafond: number): Promise<Uint8Array> => {
+  // Navigateur sans `File.stream()`. Le plafond est alors verifie apres coup,
+  // faute de mieux, mais ce chemin ne sert plus a aucun navigateur courant.
+  if (typeof file.stream !== "function") {
+    const tampon = await file.arrayBuffer();
+    if (tampon.byteLength > plafond) throw new TropVolumineux();
+    return new Uint8Array(tampon);
+  }
+
+  const lecteur = file.stream().getReader();
+  const morceaux: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await lecteur.read();
+    if (done) break;
+    if (!value) continue;
+
+    total += value.byteLength;
+    if (total > plafond) {
+      await lecteur.cancel();
+      throw new TropVolumineux();
+    }
+    morceaux.push(value);
+  }
+
+  const assemble = new Uint8Array(total);
+  let position = 0;
+  for (const morceau of morceaux) {
+    assemble.set(morceau, position);
+    position += morceau.byteLength;
+  }
+  return assemble;
+};
+
+/**
+ * Verifie qu'un fichier peut servir de recit, et renvoie ses octets.
+ * Leve une erreur lisible sinon.
+ *
  * Le type MIME n'est pas fiable (Windows annonce souvent un .md en vide) :
  * on se fie a l'extension, et au type seulement quand il est renseigne.
+ *
+ * POURQUOI CETTE FONCTION LIT LE FICHIER AU LIEU DE SE FIER A SA TAILLE
+ *
+ * Elle refusait auparavant tout fichier des que `file.size` valait zero, avec
+ * le message « est vide ». Le 26 aout 2026, ce refus est tombe sur un PDF de
+ * 64 621 octets parfaitement lisible, range dans un dossier OneDrive. Verifie
+ * a ce moment-la sur le disque : `fsutil file queryvaliddata` renvoyait bien
+ * 64 621 octets valides, et les premiers octets etaient `%PDF-1.4`. Le meme
+ * import a refonctionne peu apres, sans modification du code : le defaut est
+ * donc intermittent.
+ *
+ * `file.size` est une declaration du navigateur, pas une mesure. Elle peut
+ * valoir zero pour un fichier lisible, et le message d'erreur envoyait alors
+ * l'utilisateur chercher un probleme qui n'existait pas. On ne conclut donc au
+ * fichier vide qu'apres avoir tente la lecture et compte les octets obtenus.
+ *
+ * La taille annoncee sert encore, mais seulement dans le sens ou une erreur est
+ * sans consequence : si elle depasse deja le plafond, refuser tout de suite
+ * evite une lecture inutile.
  */
-export const verifierFichierRecit = (file: File): void => {
+export const verifierFichierRecit = async (file: File): Promise<Uint8Array> => {
   const nom = file.name.toLowerCase();
   const extensionConnue = EXTENSIONS_RECIT.some((ext) => nom.endsWith(ext));
   const typePdf = file.type === "application/pdf";
@@ -58,16 +126,51 @@ export const verifierFichierRecit = (file: File): void => {
     );
   }
 
-  if (file.size === 0) {
-    throw new Error(`« ${file.name} » est vide.`);
-  }
-
   if (file.size > TAILLE_MAX_RECIT) {
     throw new Error(
       `« ${file.name} » pèse ${formaterTaille(file.size)}, au-delà des ${formaterTaille(TAILLE_MAX_RECIT)} acceptés. ` +
         `Découpez le document, ou exportez-le en texte brut.`
     );
   }
+
+  let octets: Uint8Array;
+  try {
+    octets = await lireAuPlusPlafond(file, TAILLE_MAX_RECIT);
+  } catch (erreur) {
+    if (erreur instanceof TropVolumineux) {
+      throw new Error(
+        `« ${file.name} » dépasse les ${formaterTaille(TAILLE_MAX_RECIT)} acceptés : la lecture a été interrompue. ` +
+          `Découpez le document, ou exportez-le en texte brut.`
+      );
+    }
+    // Ne pas conclure au fichier vide : ce qu'on sait, c'est que la lecture a
+    // echoue, et le motif exact vient du navigateur.
+    const motif = String((erreur as Error)?.message || erreur || "motif inconnu");
+    throw new Error(
+      `Le navigateur n'a pas réussi à lire « ${file.name} » (${motif}). ` +
+        `Le fichier a peut-être été déplacé, renommé, ou est en cours de synchronisation. ` +
+        `Rouvrez-le pour vérifier qu'il s'ouvre, puis réessayez.`
+    );
+  }
+
+  if (octets.byteLength === 0) {
+    throw new Error(
+      `« ${file.name} » a été lu en entier et ne contient aucun octet. ` +
+        `Le fichier est vide à la source : rouvrez-le pour vérifier, ou réexportez-le.`
+    );
+  }
+
+  // Trace volontaire. C'est l'ecart qui provoquait le refus a tort, et il est
+  // intermittent : sans cette ligne, la prochaine occurrence serait de nouveau
+  // impossible a mesurer apres coup.
+  if (file.size !== octets.byteLength) {
+    console.warn(
+      `Taille annoncée par le navigateur pour « ${file.name} » : ${file.size} octet(s). ` +
+        `Octets réellement lus : ${octets.byteLength}. Le fichier est accepté sur la mesure, pas sur l'annonce.`
+    );
+  }
+
+  return octets;
 };
 
 /**

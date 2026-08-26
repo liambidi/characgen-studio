@@ -71,6 +71,48 @@ const messageDe = (e: unknown): string =>
 /** Ce qu'une sauvegarde enregistre, sans la date, ajoutée au moment de l'écriture. */
 type ProjetASauvegarder = Parameters<typeof saveProjectLocal>[0];
 
+/**
+ * Nombre d'images générées de front.
+ *
+ * Les générations se faisaient strictement une par une : la boucle attendait la
+ * fin de chaque image avant de lancer la suivante. Une image demande couramment
+ * vingt secondes, ce qui faisait plus de dix minutes d'attente pour un projet de
+ * trente illustrations, l'onglet devant rester ouvert du début à la fin.
+ *
+ * Trois, et pas davantage : le frein du serveur accepte trente requêtes par
+ * minute, mais chaque image occupe aussi de la mémoire dans le navigateur, et
+ * une rafale trop large ferait tomber le quota Google d'un coup, transformant
+ * un ralentissement en série d'échecs.
+ */
+const GENERATIONS_SIMULTANEES = 3;
+
+/**
+ * Fait passer une liste dans une file à plusieurs voies.
+ *
+ * Chaque voie prend l'élément suivant dès qu'elle est libre, plutôt que de
+ * traiter la liste par paquets : une image lente ne fait donc pas attendre
+ * celles qui la suivent. Le travail s'arrête dès que `doitSArreter` répond oui,
+ * ce qui rend le bouton « Arrêter » aussi réactif qu'avant.
+ */
+const traiterEnParallele = async <T,>(
+  elements: T[],
+  voies: number,
+  traiter: (element: T) => Promise<void>,
+  doitSArreter: () => boolean
+): Promise<void> => {
+  let prochain = 0;
+
+  const uneVoie = async () => {
+    while (!doitSArreter()) {
+      const index = prochain++;
+      if (index >= elements.length) return;
+      await traiter(elements[index]);
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(voies, elements.length) }, uneVoie));
+};
+
 /** Délai d'inactivité avant d'enregistrer automatiquement. */
 const DELAI_SAUVEGARDE_MS = 1_500;
 /** Le même, pendant une génération : l'état change à chaque image terminée. */
@@ -108,6 +150,16 @@ const App: React.FC = () => {
   const [generationEnCours, setGenerationEnCours] = useState(false);
   const arretDemandeRef = useRef(false);
   const controleurRef = useRef<AbortController | null>(null);
+  /**
+   * Suivi du decoupage en scenes pendant qu'il arrive au fil de l'eau.
+   *
+   * `scenesArrivees` compte ce qui a deja ete ajoute, et `idsScenesArrivees`
+   * retient quel identifiant a ete donne a la scene de chaque rang. Le second
+   * sert a rendre son passage du recit a la bonne scene une fois le travail
+   * fini, meme si l'utilisateur a reordonne la liste entre temps.
+   */
+  const scenesArrivees = useRef(0);
+  const idsScenesArrivees = useRef<string[]>([]);
 
   /**
    * Rend le contrôleur d'annulation, mais seulement s'il est encore le nôtre.
@@ -354,11 +406,13 @@ const App: React.FC = () => {
 
   // --- Import du récit --------------------------------------------------------
 
-  const handleFileSelect = async (file: File) => {
+  // `octets` a deja ete lu par la verification d'import : on ne relit pas le
+  // fichier, qui peut avoir change d'etat entre-temps.
+  const handleFileSelect = async (file: File, octets: Uint8Array) => {
     try {
       setLoading(true);
       setError(null);
-      const text = await extractTextFromFile(file);
+      const text = await extractTextFromFile(file, octets);
       if (!text || text.trim().length < 50) throw new Error("Le texte extrait est trop court. Vérifiez que le PDF contient bien du texte et non des images scannées.");
 
       // Le nom du fichier sert de titre de départ, modifiable ensuite.
@@ -415,7 +469,31 @@ const App: React.FC = () => {
 
   // --- Personnages ------------------------------------------------------------
 
-  const handleRemoveCharacter = (id: string) => setCharacters(prev => prev.filter(c => c.id !== id));
+  /**
+   * Supprime un personnage, après confirmation.
+   *
+   * Remplacer un projet, restaurer une sauvegarde et repartir de zéro demandaient
+   * tous confirmation ; supprimer une fiche ne demandait rien, et emportait
+   * pourtant l'image déjà générée avec elle. Le bouton est une petite croix qui
+   * apparaît au survol, juste à côté du crayon.
+   */
+  const handleRemoveCharacter = async (id: string) => {
+      const perso = characters.find(c => c.id === id);
+      if (!perso) return;
+
+      const avecImage = Boolean(perso.imageUrl);
+      const confirme = await confirmer(
+          `Supprimer « ${perso.name} » ?`,
+          avecImage
+              ? "Sa fiche et l'illustration déjà générée seront effacées. Cette action ne peut pas être annulée."
+              : "Sa fiche sera effacée. Cette action ne peut pas être annulée.",
+          { libelleConfirmer: "Supprimer", dangereux: true }
+      );
+      if (!confirme) return;
+
+      setCharacters(prev => prev.filter(c => c.id !== id));
+      notifier(`Personnage « ${perso.name} » supprimé.`, 'info');
+  };
   const handleUpdateCharacter = (id: string, data: Partial<Character>) => setCharacters(prev => prev.map(c => c.id === id ? { ...c, ...data } : c));
 
   const handleAddCharacter = async (method: 'manual'|'ai', data: any) => {
@@ -453,7 +531,39 @@ const App: React.FC = () => {
 
   // --- Décors -----------------------------------------------------------------
 
-  const handleRemoveEnvironment = (id: string) => setEnvironments(prev => prev.filter(e => e.id !== id));
+  /**
+   * Supprime un décor, après confirmation.
+   *
+   * Un décor n'est pas isolé : les scènes le désignent par son identifiant pour
+   * s'en servir d'image de référence. Le message dit donc combien de scènes
+   * perdent leur décor, information que l'écran ne donnait nulle part.
+   */
+  const handleRemoveEnvironment = async (id: string) => {
+      const decor = environments.find(e => e.id === id);
+      if (!decor) return;
+
+      const scenesLiees = scenes.filter(s => s.environmentId === id).length;
+      const detail = [
+          decor.imageUrl ? "L'illustration déjà générée sera effacée." : null,
+          scenesLiees > 0
+              ? `${scenesLiees} scène${scenesLiees > 1 ? 's' : ''} qui s'y déroule${scenesLiees > 1 ? 'nt' : ''} perdra${scenesLiees > 1 ? 'ont' : ''} son décor de référence.`
+              : null,
+          "Cette action ne peut pas être annulée.",
+      ].filter(Boolean).join(' ');
+
+      const confirme = await confirmer(
+          `Supprimer le décor « ${decor.name} » ?`,
+          detail,
+          { libelleConfirmer: "Supprimer", dangereux: true }
+      );
+      if (!confirme) return;
+
+      setEnvironments(prev => prev.filter(e => e.id !== id));
+      // Les scènes gardent leur description écrite du lieu, elles perdent seulement
+      // le renvoi vers une fiche qui n'existe plus.
+      setScenes(prev => prev.map(s => s.environmentId === id ? { ...s, environmentId: undefined } : s));
+      notifier(`Décor « ${decor.name} » supprimé.`, 'info');
+  };
   const handleUpdateEnvironment = (id: string, data: Partial<Environment>) => setEnvironments(prev => prev.map(e => e.id === id ? { ...e, ...data } : e));
 
   const handleAddEnvironment = async (method: 'manual'|'ai', data: any): Promise<string | void> => {
@@ -515,36 +625,46 @@ const App: React.FC = () => {
     const controleur = new AbortController();
     controleurRef.current = controleur;
 
+    const enAttente = () => arretDemandeRef.current;
+
     try {
-      for (const char of [...characters]) {
-        if (arretDemandeRef.current) break;
-        if (char.status === 'completed') continue;
+      // Les personnages d'abord, en entier : leurs fiches servent d'image de
+      // référence aux scènes, l'ordre entre les deux familles compte donc.
+      await traiterEnParallele(
+        characters.filter(c => c.status !== 'completed'),
+        GENERATIONS_SIMULTANEES,
+        async (char) => {
+          setCharacters(p => p.map(c => c.id === char.id ? { ...c, status: 'generating', errorMessage: undefined } : c));
+          try {
+            const imageUrl = await generateCharacterImage(char, stylePrompt, { ...genConfig, aspectRatio: '1:1' }, controleur.signal);
+            setCharacters(p => p.map(c => c.id === char.id ? { ...c, imageUrl, status: 'completed', errorMessage: undefined } : c));
+          } catch (e) {
+            // Une annulation n'est pas un échec : la vignette est remise en
+            // attente par arreterGeneration, il n'y a rien à signaler.
+            if ((e as any)?.name === 'AbortError') return;
+            echecs++;
+            setCharacters(p => p.map(c => c.id === char.id ? { ...c, status: 'error', errorMessage: messageDe(e) } : c));
+          }
+        },
+        enAttente
+      );
 
-        setCharacters(p => p.map(c => c.id === char.id ? { ...c, status: 'generating', errorMessage: undefined } : c));
-        try {
-          const imageUrl = await generateCharacterImage(char, stylePrompt, { ...genConfig, aspectRatio: '1:1' }, controleur.signal);
-          setCharacters(p => p.map(c => c.id === char.id ? { ...c, imageUrl, status: 'completed', errorMessage: undefined } : c));
-        } catch (e) {
-          if ((e as any)?.name === 'AbortError') break;
-          echecs++;
-          setCharacters(p => p.map(c => c.id === char.id ? { ...c, status: 'error', errorMessage: messageDe(e) } : c));
-        }
-      }
-
-      for (const env of [...environments]) {
-        if (arretDemandeRef.current) break;
-        if (env.status === 'completed') continue;
-
-        setEnvironments(p => p.map(e => e.id === env.id ? { ...e, status: 'generating', errorMessage: undefined } : e));
-        try {
-          const imageUrl = await generateEnvironmentImage(env, stylePrompt, genConfig, controleur.signal);
-          setEnvironments(p => p.map(e => e.id === env.id ? { ...e, imageUrl, status: 'completed', errorMessage: undefined } : e));
-        } catch(e) {
-          if ((e as any)?.name === 'AbortError') break;
-          echecs++;
-          setEnvironments(p => p.map(e => e.id === env.id ? { ...e, status: 'error', errorMessage: messageDe(e) } : e));
-        }
-      }
+      await traiterEnParallele(
+        environments.filter(e => e.status !== 'completed'),
+        GENERATIONS_SIMULTANEES,
+        async (env) => {
+          setEnvironments(p => p.map(e => e.id === env.id ? { ...e, status: 'generating', errorMessage: undefined } : e));
+          try {
+            const imageUrl = await generateEnvironmentImage(env, stylePrompt, genConfig, controleur.signal);
+            setEnvironments(p => p.map(e => e.id === env.id ? { ...e, imageUrl, status: 'completed', errorMessage: undefined } : e));
+          } catch(e) {
+            if ((e as any)?.name === 'AbortError') return;
+            echecs++;
+            setEnvironments(p => p.map(e => e.id === env.id ? { ...e, status: 'error', errorMessage: messageDe(e) } : e));
+          }
+        },
+        enAttente
+      );
 
       if (!arretDemandeRef.current) {
         notifier(echecs === 0
@@ -595,26 +715,100 @@ const App: React.FC = () => {
 
   // --- Scènes -----------------------------------------------------------------
 
+  /**
+   * Lance le decoupage en scenes.
+   *
+   * Les scenes arrivent au fil de l'eau : l'ecran de relecture s'ouvre des la
+   * premiere, et les suivantes s'ajoutent pendant que l'utilisateur relit deja.
+   * Seules les scenes NOUVELLES sont ajoutees, jamais la liste entiere : sans
+   * cela, une correction faite pendant l'attente serait ecrasee au sondage
+   * suivant.
+   */
   const handleStartSceneExtraction = async (count: number | null) => {
     setShowSceneAnalysisConfig(false);
     setLoading(true);
+    setScenes([]);
+    setProgression("");
+    scenesArrivees.current = 0;
+    idsScenesArrivees.current = [];
     setStep(AppStep.EXTRACTING_SCENES);
 
     const controleur = new AbortController();
     controleurRef.current = controleur;
 
+    // Les identifiants sont fabriques hors du setState : une fonction de mise a
+    // jour peut etre rejouee par React, et rejouer un uuidv4 donnerait deux
+    // identifiants differents pour la meme scene.
+    const ajouterLesNouvelles = (arrivees: any[]) => {
+        if (arrivees.length <= scenesArrivees.current) return;
+
+        const nouvelles: Scene[] = arrivees.slice(scenesArrivees.current).map((s: any, k: number) => {
+            const id = uuidv4();
+            idsScenesArrivees.current[scenesArrivees.current + k] = id;
+            return { ...s, id, status: 'pending' as const };
+        });
+
+        scenesArrivees.current = arrivees.length;
+        setScenes(prev => [...prev, ...nouvelles]);
+    };
+
+    /**
+     * Rend a chaque scene le passage du recit qui lui revient.
+     *
+     * Les livraisons intermediaires arrivent sans leur texte, qui pese le roman
+     * entier et serait retelecharge a chaque sondage. Le resultat final le
+     * porte : on le recolle ici, scene par scene, en respectant ce que
+     * l'utilisateur a pu corriger pendant l'attente.
+     */
+    const rendreLesPassages = (completes: any[]) => {
+        setScenes(prev => prev.map(scene => {
+            const rang = idsScenesArrivees.current.indexOf(scene.id);
+            if (rang === -1) return scene;
+
+            const complete = completes[rang];
+            // Une correction faite pendant l'attente prime sur le texte du serveur.
+            if (!complete || scene.originalTextExcerpt) return scene;
+
+            return { ...scene, originalTextExcerpt: complete.originalTextExcerpt || "" };
+        }));
+    };
+
     try {
-        const result = await analyzeScenes(fullText, characters.map(c => c.name), count || undefined, controleur.signal);
-        setScenes(result.scenes.map(s => ({ ...s, id: uuidv4(), status: 'pending' })));
+        const result = await analyzeScenes(
+            fullText,
+            characters.map(c => c.name),
+            count || undefined,
+            controleur.signal,
+            setProgression,
+            (partiel) => {
+                ajouterLesNouvelles(partiel.scenes || []);
+                // Des la premiere scene prete, on quitte l'ecran d'attente.
+                setStep(AppStep.SCENE_REVIEW);
+            },
+            environments.map(e => ({ id: e.id, name: e.name }))
+        );
+        ajouterLesNouvelles(result.scenes);
+        rendreLesPassages(result.scenes);
         setStep(AppStep.SCENE_REVIEW);
         notifier(`${result.scenes.length} scènes extraites du récit.`);
     } catch (err) {
-        if ((err as any)?.name === 'AbortError') { setStep(AppStep.GENERATION_HUB); return; }
+        if ((err as any)?.name === 'AbortError') {
+            // Les scenes deja affichees n'ont pas encore recu leur passage du
+            // recit : les garder donnerait un sequencier dont les pages seraient
+            // vides au moment de fabriquer le livre. On repart propre.
+            setScenes([]);
+            setStep(AppStep.GENERATION_HUB);
+            return;
+        }
+        // Meme raison qu'au dessus : des scenes sans leur passage ne servent a
+        // rien, et le message d'erreur promet justement que rien d'autre n'a bouge.
+        setScenes([]);
         setError(messageDe(err));
         notifierErreur("Le découpage en scènes a échoué.", err);
         setStep(AppStep.GENERATION_HUB);
     } finally {
         setLoading(false);
+        setProgression("");
         relacherControleur(controleur);
     }
   };
@@ -643,7 +837,10 @@ const App: React.FC = () => {
   const handleFindMoreScenes = async (count?: number, hints?: string) => {
       setLoading(true);
       try {
-          const nouvelles = await findMissingScenes(fullText, scenes.map(s => s.title), characters.map(c => c.name), count, hints);
+          const nouvelles = await findMissingScenes(
+              fullText, scenes.map(s => s.title), characters.map(c => c.name), count, hints,
+              environments.map(e => ({ id: e.id, name: e.name })), setProgression
+          );
           const ajoutees: Scene[] = nouvelles.map((s: any) => ({ ...s, id: uuidv4(), status: 'pending' }));
           setScenes(prev => [...prev, ...ajoutees]);
           notifier(ajoutees.length > 0
@@ -653,7 +850,29 @@ const App: React.FC = () => {
           notifierErreur("Recherche de scènes impossible.", e);
       } finally {
           setLoading(false);
+          setProgression("");
       }
+  };
+
+  /**
+   * Supprime une scène, après confirmation. Une scène porte le passage du récit
+   * qui lui correspond, en plus de son illustration : les deux disparaissent.
+   */
+  const handleRemoveScene = async (id: string) => {
+      const scene = scenes.find(s => s.id === id);
+      if (!scene) return;
+
+      const confirme = await confirmer(
+          `Supprimer la scène « ${scene.title} » ?`,
+          scene.imageUrl
+              ? "Le passage du récit et l'illustration déjà générée seront effacés. Cette action ne peut pas être annulée."
+              : "Le passage du récit qu'elle contient sera effacé. Cette action ne peut pas être annulée.",
+          { libelleConfirmer: "Supprimer", dangereux: true }
+      );
+      if (!confirme) return;
+
+      setScenes(prev => prev.filter(s => s.id !== id));
+      notifier(`Scène « ${scene.title} » supprimée.`, 'info');
   };
 
   const handleMoveScene = (id: string, direction: 'up' | 'down') => {
@@ -707,20 +926,22 @@ const App: React.FC = () => {
       controleurRef.current = controleur;
 
       try {
-        for (const scene of [...scenes]) {
-            if (arretDemandeRef.current) break;
-            if (scene.status === 'completed') continue;
-
-            setScenes(p => p.map(s => s.id === scene.id ? { ...s, status: 'generating', errorMessage: undefined } : s));
-            try {
-                const imageUrl = await generateSceneImage(scene, stylePrompt, characters, environments, genConfig, controleur.signal);
-                setScenes(p => p.map(s => s.id === scene.id ? { ...s, imageUrl, status: 'completed', errorMessage: undefined } : s));
-            } catch (e) {
-                if ((e as any)?.name === 'AbortError') break;
-                echecs++;
-                setScenes(p => p.map(s => s.id === scene.id ? { ...s, status: 'error', errorMessage: messageDe(e) } : s));
-            }
-        }
+        await traiterEnParallele(
+            scenes.filter(s => s.status !== 'completed'),
+            GENERATIONS_SIMULTANEES,
+            async (scene) => {
+                setScenes(p => p.map(s => s.id === scene.id ? { ...s, status: 'generating', errorMessage: undefined } : s));
+                try {
+                    const imageUrl = await generateSceneImage(scene, stylePrompt, characters, environments, genConfig, controleur.signal);
+                    setScenes(p => p.map(s => s.id === scene.id ? { ...s, imageUrl, status: 'completed', errorMessage: undefined } : s));
+                } catch (e) {
+                    if ((e as any)?.name === 'AbortError') return;
+                    echecs++;
+                    setScenes(p => p.map(s => s.id === scene.id ? { ...s, status: 'error', errorMessage: messageDe(e) } : s));
+                }
+            },
+            () => arretDemandeRef.current
+        );
 
         if (!arretDemandeRef.current) {
           notifier(echecs === 0
@@ -947,7 +1168,12 @@ const App: React.FC = () => {
             <div role="alert" className="bg-red-500/15 border border-red-500/30 text-red-200 p-4 rounded-xl mt-4 flex items-start gap-3">
                 <i className="fas fa-circle-exclamation mt-0.5" aria-hidden="true"></i>
                 <div className="flex-1">
-                    <p className="text-sm">{error}</p>
+                    {/* Un message d'erreur qui explique tient rarement sur une ligne.
+                        Chaque retour a la ligne devient un paragraphe, sinon tout
+                        arrive en un seul bloc que personne ne lit jusqu'au bout. */}
+                    {error.split('\n').map((ligne, i) => (
+                        <p key={i} className={`text-sm ${i > 0 ? 'mt-2' : ''}`}>{ligne}</p>
+                    ))}
                 </div>
                 <button onClick={() => setError(null)} className="w-11 h-11 -m-2 flex items-center justify-center text-red-300 hover:text-white transition" aria-label="Masquer ce message">
                     <i className="fas fa-times text-xs" aria-hidden="true"></i>
@@ -1005,15 +1231,25 @@ const App: React.FC = () => {
                 <div className="flex-1 flex flex-col items-center justify-center p-20 text-center gap-4">
                     <div className="w-12 h-12 border-2 border-primary border-t-transparent rounded-full animate-spin" aria-hidden="true"></div>
                     <p className="text-white font-heading text-lg">Découpage du récit en scènes</p>
-                    <p className="text-slate-400 text-sm max-w-sm">L'IA lit votre texte en entier et en extrait les moments clés. Comptez une à deux minutes pour un roman.</p>
+                    {/* L'avancement vient du serveur : sans lui, l'écran restait
+                        muet pendant plusieurs minutes et rien ne distinguait un
+                        travail en cours d'une panne. */}
+                    <p className="text-primary text-sm font-mono min-h-[1.25rem]" aria-live="polite">
+                        {progression || "Lecture du récit en entier"}
+                    </p>
+                    <p className="text-slate-400 text-sm max-w-sm">
+                        L'IA repère d'abord où les scènes commencent vraiment, puis rédige chaque
+                        fiche. Les premières scènes s'affichent dès qu'elles sont prêtes.
+                    </p>
                 </div>
               ) : (
                 <div className="py-8">
                     <SceneReview
                         scenes={scenes}
+                        enCours={loading ? progression : ""}
                         allCharacters={characters}
                         allEnvironments={environments}
-                        onRemoveScene={(id) => setScenes(p => p.filter(s => s.id !== id))}
+                        onRemoveScene={handleRemoveScene}
                         onAddScene={handleAddScene}
                         onUpdateScene={(id, d) => setScenes(p => p.map(s => s.id === id ? {...s, ...d} : s))}
                         onFindMoreScenes={handleFindMoreScenes}
@@ -1056,7 +1292,7 @@ const App: React.FC = () => {
       <ChatAssistant contexte={contexteAssistant} />
       <CentreNotifications />
       {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
-      {showSceneAnalysisConfig && <AnalysisConfigModal type="scene" onConfirm={handleStartSceneExtraction} onCancel={() => setShowSceneAnalysisConfig(false)} />}
+      {showSceneAnalysisConfig && <AnalysisConfigModal type="scene" longueurRecit={fullText.length} onConfirm={handleStartSceneExtraction} onCancel={() => setShowSceneAnalysisConfig(false)} />}
       {editingImage && <ImageEditorModal imageUrl={editingImage.url} onClose={() => setEditingImage(null)} onSave={handleSaveEditedImage} />}
       <OnboardingTour step={step} />
     </div>

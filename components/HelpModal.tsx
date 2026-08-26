@@ -7,31 +7,46 @@ interface HelpModalProps {
 const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
   const [activeTab, setActiveTab] = useState<'tuto' | 'tips' | 'faq'>('tuto');
 
+  /**
+   * Les sept étapes réelles du parcours, celles de la barre de navigation.
+   * Cette liste n'en décrivait que cinq : Décors et Storyboard n'apparaissaient
+   * nulle part, et le tutoriel flottant en annonçait six de son côté.
+   */
   const steps = [
     {
       icon: "fa-file-upload",
-      title: "1. Importation",
-      desc: "Chargez votre roman (PDF) ou vos notes (TXT). L'IA va lire le texte pour en extraire l'essence."
+      title: "1. Importer",
+      desc: "Chargez votre roman en PDF ou vos notes en fichier texte. L'IA lit le texte en entier, jusqu'à 500 pages, et en extrait les personnages et les lieux."
     },
     {
       icon: "fa-users",
-      title: "2. Casting (Persos)",
-      desc: "Révisez les fiches personnages générées. Modifiez les descriptions physiques ou ajoutez des détails manquants avant de générer les images."
+      title: "2. Casting",
+      desc: "Vérifiez les fiches de personnages. C'est la description physique qui sera dessinée : plus elle est précise, plus l'image est fidèle. Le style artistique du livre se choisit ici aussi."
+    },
+    {
+      icon: "fa-tree",
+      title: "3. Décors",
+      desc: "Les lieux où l'action revient. Ils donnent aux illustrations de scènes leur palette et leur architecture. Le bouton Chercher relit votre texte si un lieu manque."
     },
     {
       icon: "fa-images",
-      title: "3. Galerie",
-      desc: "Générez les portraits de référence. Ce sont ces visages qui seront utilisés pour assurer la cohérence dans les scènes."
+      title: "4. Galerie",
+      desc: "Les fiches de personnages et de décors se dessinent. Ce sont ces images qui servent de référence à toutes les scènes, pour que les visages restent les mêmes d'une planche à l'autre."
     },
     {
       icon: "fa-list-ol",
-      title: "4. Scénario",
-      desc: "L'IA découpe l'histoire en scènes clés (Storyboard). Elle associe les personnages présents et prépare les descriptions de décors."
+      title: "5. Script",
+      desc: "Votre récit est découpé en scènes. Vérifiez les personnages présents et le décor de chacune, réordonnez si besoin, et choisissez le format de reliure du livre."
+    },
+    {
+      icon: "fa-film",
+      title: "6. Storyboard",
+      desc: "Chaque scène est illustrée, en combinant les visages de l'étape 4 et l'action du script. Une illustration peut être régénérée ou retouchée à la baguette."
     },
     {
       icon: "fa-book-open",
-      title: "5. Livre Final",
-      desc: "Assemblez le tout dans une mise en page 'Beau Livre' avec le texte original et vos illustrations, prêt à être imprimé."
+      title: "7. Livre",
+      desc: "L'assemblage final, texte d'origine et illustrations. Le bouton « Télécharger en PDF » fabrique le fichier au format de reliure choisi à l'étape 5."
     }
   ];
 
@@ -81,7 +96,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                 <div className="space-y-8">
                     <div className="text-center mb-10">
                         <h3 className="text-2xl font-bold text-white mb-2">Comment ça marche ?</h3>
-                        <p className="text-slate-400">Transformez votre texte en roman graphique en 5 étapes simples.</p>
+                        <p className="text-slate-300">Transformez votre texte en livre illustré, en sept étapes.</p>
                     </div>
                     
                     <div className="space-y-6 relative before:absolute before:left-6 before:top-4 before:bottom-4 before:w-0.5 before:bg-slate-700">
@@ -114,11 +129,11 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
 
                     <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-700">
                         <div className="flex items-center gap-3 mb-4 text-blue-400">
-                            <i className="fas fa-cloud-upload-alt text-2xl" aria-hidden="true"></i>
-                            <h3 className="font-bold text-lg text-white">Sauvegardez souvent</h3>
+                            <i className="fas fa-hdd text-2xl" aria-hidden="true"></i>
+                            <h3 className="font-bold text-lg text-white">Où va votre travail</h3>
                         </div>
                         <p className="text-sm text-slate-300 leading-relaxed">
-                            Créez un compte pour sauvegarder votre progression. Vos projets sont stockés de manière chiffrée. N'oubliez pas de cliquer sur l'icône <i className="fas fa-cloud-upload-alt mx-1" aria-hidden="true"></i> après avoir généré des images importantes.
+                            Votre projet s'enregistre tout seul dans ce navigateur, après chaque modification. Rien ne part sur un serveur. Pour le garder ailleurs, ou l'ouvrir sur une autre machine, passez par <strong>Sauvegarder puis Exporter le projet</strong> : vous obtenez un fichier que vous rangez où vous voulez.
                         </p>
                     </div>
 
@@ -128,7 +143,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                             <h3 className="font-bold text-lg text-white">Style Artistique</h3>
                         </div>
                         <p className="text-sm text-slate-300 leading-relaxed">
-                            Dans l'étape "Persos", le champ "Style Artistique" influence tout le projet. Soyez précis : "Aquarelle, couleurs pastels, doux" ou "Cyberpunk, néon, sombre, contrasté".
+                            À l'étape Casting, le champ « Direction artistique » s'applique à toutes les images du projet. Soyez précis : « aquarelle, couleurs pastel, traits doux » ou « cyberpunk, néons, sombre et contrasté ». Les huit boutons en dessous remplissent le champ pour vous.
                         </p>
                     </div>
 
@@ -138,7 +153,7 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                             <h3 className="font-bold text-lg text-white">PDF volumineux</h3>
                         </div>
                         <p className="text-sm text-slate-300 leading-relaxed">
-                            Si votre PDF est très long (+500 pages), l'analyse peut prendre du temps. CharacGen limite l'analyse aux éléments clés pour éviter de surcharger le navigateur.
+                            La lecture s'arrête à 500 pages, et un message vous le dit quand c'est le cas : découpez alors le document pour analyser la suite. Un PDF scanné, fait d'images de pages, ne contient pas de texte lisible et sera refusé.
                         </p>
                     </div>
                 </div>
@@ -151,8 +166,8 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                             <i className="fas fa-chevron-right text-xs text-primary" aria-hidden="true"></i>
                             Est-ce gratuit ?
                         </h4>
-                        <p className="text-sm text-slate-400 pl-6">
-                            L'application utilise votre propre clé API Google Gemini. Les coûts dépendent de votre utilisation personnelle de l'API Google (qui offre un niveau gratuit généreux).
+                        <p className="text-sm text-slate-300 pl-6">
+                            Oui, pour vous : rien ne vous est demandé, ni compte ni clé. Les appels à l'IA passent par le serveur du site, qui utilise sa propre clé Google. Le nombre de demandes est donc limité, et un message vous prévient si la limite est atteinte.
                         </p>
                     </div>
                     
@@ -161,8 +176,8 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                             <i className="fas fa-chevron-right text-xs text-primary" aria-hidden="true"></i>
                             Mes données sont-elles privées ?
                         </h4>
-                        <p className="text-sm text-slate-400 pl-6">
-                            Oui. Le texte est analysé par l'IA via l'API, mais nous ne stockons rien sur nos serveurs sauf si vous utilisez la fonction de sauvegarde (qui est chiffrée et liée à votre compte).
+                        <p className="text-sm text-slate-300 pl-6">
+                            Votre projet, personnages et illustrations compris, reste dans ce navigateur : il n'est envoyé sur aucun serveur et personne d'autre n'y a accès. En revanche, le texte de votre récit est bien transmis à Google pour être analysé, puisque c'est son modèle qui travaille. Le temps de l'analyse, ce texte transite donc par leurs serveurs.
                         </p>
                     </div>
 
@@ -171,8 +186,8 @@ const HelpModal: React.FC<HelpModalProps> = ({ onClose }) => {
                             <i className="fas fa-chevron-right text-xs text-primary" aria-hidden="true"></i>
                             Puis-je imprimer le livre ?
                         </h4>
-                        <p className="text-sm text-slate-400 pl-6">
-                            Absolument. À la dernière étape, cliquez sur "Imprimer / PDF". Utilisez les paramètres de votre navigateur pour "Enregistrer au format PDF". La mise en page est optimisée pour le papier.
+                        <p className="text-sm text-slate-300 pl-6">
+                            Oui. À la dernière étape, le bouton « Télécharger en PDF » fabrique le fichier au format de reliure choisi au Script, prêt pour l'impression. Le bouton Ebook produit une version web, et l'icône imprimante envoie directement à votre imprimante.
                         </p>
                     </div>
                  </div>

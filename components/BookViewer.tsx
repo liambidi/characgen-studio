@@ -376,7 +376,7 @@ ${planches}
                         </div>
                     )}
 
-                    <p className="font-serif italic text-slate-400 text-xl md:text-2xl">Une création graphique assistée par IA</p>
+                    <p className="font-serif italic text-slate-500 text-xl md:text-2xl">Une création graphique assistée par IA</p>
                 </div>
             </div>
 
@@ -423,11 +423,16 @@ ${planches}
                                         {scene.title}
                                     </h2>
 
-                                    <div className="font-serif text-lg md:text-xl leading-loose text-slate-400">
+                                    {/* Le texte du récit était affiché en slate-400 sur fond blanc, soit un
+                                        contraste d'environ 2,5 pour 1 quand la norme en demande 4,5. Le défaut
+                                        était déjà connu du code, qui forçait ce texte en noir à l'impression
+                                        mais le laissait gris clair à l'écran, alors que c'est le contenu
+                                        principal de la page. */}
+                                    <div className="font-serif text-lg md:text-xl leading-loose text-slate-700">
                                         {scene.originalTextExcerpt ? (
                                             <p className="max-w-2xl mx-auto whitespace-pre-wrap text-left">{scene.originalTextExcerpt}</p>
                                         ) : (
-                                            <p className="text-slate-400 italic text-base">{scene.description}</p>
+                                            <p className="text-slate-600 italic text-base">{scene.description}</p>
                                         )}
                                     </div>
 
@@ -447,12 +452,12 @@ ${planches}
                 <p className="font-serif italic text-2xl md:text-3xl mb-16 max-w-2xl leading-relaxed text-slate-300">
                     {titreAffiche}
                 </p>
-                <div className="flex items-center gap-6 text-sm font-sans uppercase tracking-[0.3em] text-slate-400">
+                <div className="flex items-center gap-6 text-sm font-sans uppercase tracking-[0.3em] text-slate-300">
                     <div className="h-[1px] w-16 bg-slate-600"></div>
                     <span>CharacGen Studio</span>
                     <div className="h-[1px] w-16 bg-slate-600"></div>
                 </div>
-                <div className="mt-6 text-xs font-mono text-slate-400">
+                <div className="mt-6 text-xs font-mono text-slate-300">
                     Édition générée le {new Date().toLocaleDateString('fr-FR')}
                 </div>
             </div>
@@ -478,7 +483,11 @@ ${planches}
 
             img { max-height: 60vh !important; page-break-inside: avoid; }
             .text-slate-900 { color: #000000 !important; }
-            .text-slate-400 { color: #1a1a1a !important; }
+
+            /* La règle qui suivait forçait TOUT .text-slate-400 en noir, y compris
+               la quatrieme de couverture, qui est sur fond sombre : elle y produisait
+               du texte noir sur fond noir. Elle n'existait que pour rattraper le
+               texte du récit, désormais lisible à l'écran comme sur le papier. */
         }
       `}</style>
     </div>

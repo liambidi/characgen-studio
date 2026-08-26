@@ -6,46 +6,61 @@ interface OnboardingTourProps {
   step: AppStep;
 }
 
+/**
+ * Un conseil par étape du parcours.
+ *
+ * Ce tableau en comptait six alors que la barre de navigation en propose sept :
+ * l'étape Décors n'avait aucune explication, et la numérotation affichée ne
+ * correspondait donc à rien. Le conseil de la dernière étape renvoyait par
+ * ailleurs vers le bouton Imprimer du navigateur, alors qu'un bouton
+ * « Télécharger en PDF » fabrique le livre au format de reliure choisi.
+ */
 const TUTORIAL_CONTENT: Record<number, { title: string; content: string; icon: string; stepNumber: number }> = {
   [AppStep.UPLOAD]: {
     title: "Bienvenue dans le Studio",
-    content: "Tout commence ici. Importez votre fichier PDF ou Texte. L'IA va analyser votre récit pour en extraire l'ADN : personnages, lieux et scènes clés.",
+    content: "Tout commence ici. Importez un PDF ou un fichier texte. L'IA lit votre récit en entier pour en extraire les personnages et les lieux. Comptez une à deux minutes pour un roman.",
     icon: "fa-file-import",
     stepNumber: 1
   },
   [AppStep.REVIEW_CHARS]: {
-    title: "Le Casting",
-    content: "L'IA a détecté ces personnages. C'est le moment crucial : vérifiez leurs descriptions physiques. Plus c'est détaillé, plus l'image sera fidèle. Vous pouvez aussi définir le style artistique global ici.",
+    title: "Le casting",
+    content: "Voici les personnages détectés. C'est le moment le plus important : vérifiez leur description physique, car c'est elle qui sera dessinée. Choisissez aussi le style artistique du livre, en haut de l'écran.",
     icon: "fa-users",
     stepNumber: 2
   },
-  [AppStep.GENERATION_HUB]: {
-    title: "La Galerie de Portraits",
-    content: "Voici les visages de votre histoire. Ces images serviront de RÉFÉRENCE pour toutes les scènes suivantes. Si un visage ne vous plaît pas, cliquez sur 'Régénérer' ou éditez-le avec la baguette magique.",
-    icon: "fa-portrait",
+  [AppStep.REVIEW_ENVIRONMENTS]: {
+    title: "Les décors",
+    content: "Les lieux où l'action revient plusieurs fois. Ils serviront de référence de couleur et d'architecture aux illustrations de scènes. Le bouton Chercher relit votre texte si un lieu manque.",
+    icon: "fa-tree",
     stepNumber: 3
   },
-  [AppStep.SCENE_REVIEW]: {
-    title: "Le Scénario Découpé",
-    content: "L'histoire est maintenant découpée en plans (storyboard). Vérifiez que chaque scène contient bien les bons personnages et un décor décrit. Vous pouvez ajouter manuellement des plans de coupe.",
-    icon: "fa-list-ol",
+  [AppStep.GENERATION_HUB]: {
+    title: "La galerie",
+    content: "Les fiches de personnages et de décors se dessinent ici. Ces images servent de référence à toutes les scènes qui suivent. Un visage ne vous plaît pas : régénérez la fiche, ou retouchez-la à la baguette.",
+    icon: "fa-images",
     stepNumber: 4
   },
-  [AppStep.SCENE_GALLERY]: {
-    title: "Le Storyboard Final",
-    content: "La magie opère ! L'IA combine vos personnages (étape 2) avec les actions du scénario (étape 4). Vous pouvez télécharger les images ou les retoucher si nécessaire.",
-    icon: "fa-film",
+  [AppStep.SCENE_REVIEW]: {
+    title: "Le séquencier",
+    content: "Votre récit est découpé en scènes. Vérifiez que chacune porte les bons personnages et un décor, puis choisissez le format de reliure du livre, en bas de l'écran. Vous pouvez réordonner, insérer ou retirer des scènes.",
+    icon: "fa-list-ol",
     stepNumber: 5
   },
-  [AppStep.FINAL_BOOK]: {
-    title: "Votre Œuvre",
-    content: "L'assemblage final. Le texte original côtoie vos illustrations. Utilisez le bouton 'Imprimer' de votre navigateur pour sauvegarder le tout en PDF.",
-    icon: "fa-book-open",
+  [AppStep.SCENE_GALLERY]: {
+    title: "Le storyboard",
+    content: "L'IA combine les visages de l'étape 4 avec les actions du séquencier. Chaque illustration peut être téléchargée, régénérée ou retouchée. Le bouton Arrêter interrompt la série sans rien perdre.",
+    icon: "fa-film",
     stepNumber: 6
+  },
+  [AppStep.FINAL_BOOK]: {
+    title: "Votre livre",
+    content: "L'assemblage final, où le texte d'origine côtoie vos illustrations. Le bouton « Télécharger en PDF » fabrique le fichier au format de reliure choisi à l'étape 5. Le bouton Ebook produit une version web dans une archive.",
+    icon: "fa-book-open",
+    stepNumber: 7
   }
 };
 
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 7;
 
 const OnboardingTour: React.FC<OnboardingTourProps> = ({ step }) => {
   const [isVisible, setIsVisible] = useState(false);

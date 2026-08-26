@@ -1,13 +1,14 @@
 import type { Config, Context } from "@netlify/edge-functions";
 import { GoogleGenAI, Type } from "https://esm.sh/@google/genai@1.34.0";
+// Meme magasin que la fonction d'arriere-plan, charge par URL comme le SDK
+// Google : sous Deno, il n'y a pas de node_modules a interroger.
+import { getStore } from "https://esm.sh/@netlify/blobs@11.0.1";
 import {
-  CHUNK_MAX,
   LIMITES,
+  MAGASIN_ANALYSES,
   MODELES,
-  ErreurDeSaisie,
-  condenserSegment,
+  PREFIXE_LIMITE_EDGE,
   construireSchemas,
-  decouperEnParagraphes,
   decouperImage,
   memePersonnage,
   estModeleIntrouvable,
@@ -15,10 +16,7 @@ import {
   listeValide,
   lireJson,
   messageLisible,
-  nombreValide,
-  preparerTexte,
   texteValide,
-  type OutilsAnalyse,
 } from "../shared/analyse.ts";
 
 // La cle n'existe QUE cote serveur (variable d'environnement Netlify), jamais dans le bundle envoye au navigateur.
@@ -67,67 +65,22 @@ const genererAvecRepli = async (
   );
 };
 
-/**
- * Ce que le fichier partage attend pour travailler : de quoi decrire un schema
- * et de quoi interroger le modele. Il ne connait ni Deno ni le SDK charge ici.
- */
-const OUTILS: OutilsAnalyse = {
-  Type,
-  generer: (role, requete) => genererAvecRepli(role, requete),
-};
-
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// ---------------------------------------------------------------------------
-// Decoupage du recit en segments de scenes
-// ---------------------------------------------------------------------------
-
-/**
- * Repartit le recit en autant de segments que de scenes voulues.
- * Aucune troncature ici : chaque segment garde l'integralite de son texte, et
- * c'est l'analyse qui se charge de condenser les segments trop longs.
- */
-const segmentTextForScenes = (text: string, targetSceneCount: number = 10): string[] => {
-  const normalise = text.replace(/\r\n/g, "\n").replace(/\n\s*\n/g, "\n");
-  const total = normalise.length;
-  if (total < 500) return [normalise];
-
-  const tailleCible = Math.ceil(total / targetSceneCount);
-
-  // decouperEnParagraphes garantit qu'aucun morceau ne depasse la taille cible,
-  // y compris pour un texte sans le moindre retour a la ligne : le decoupage de
-  // secours qui figurait ici n'a plus lieu d'etre.
-  const morceaux = decouperEnParagraphes(normalise, tailleCible);
-
-  // Le decoupage par paragraphes tombe rarement juste : on fusionne les
-  // segments voisins les plus courts jusqu'a obtenir le nombre demande,
-  // pour que "10 scenes" donne bien 10 scenes.
-  while (morceaux.length > targetSceneCount && morceaux.length > 1) {
-    let indexPlusCourt = 0;
-    let sommeMin = Infinity;
-    for (let i = 0; i < morceaux.length - 1; i++) {
-      const somme = morceaux[i].length + morceaux[i + 1].length;
-      if (somme < sommeMin) {
-        sommeMin = somme;
-        indexPlusCourt = i;
-      }
-    }
-    morceaux.splice(indexPlusCourt, 2, morceaux[indexPlusCourt] + morceaux[indexPlusCourt + 1]);
-  }
-
-  return morceaux;
-};
-
 // ---------------------------------------------------------------------------
 // Schemas de reponse
 // ---------------------------------------------------------------------------
 
 const { SCHEMA_PERSONNAGE, SCHEMA_ENVIRONNEMENT, SCHEMA_SCENE } = construireSchemas(Type);
 
-// L'analyse d'un recit ne vit plus ici : elle demandait une trentaine de secondes
-// pour le seul appel final, sur un budget d'environ 35 secondes, et tombait en
-// timeout des qu'un vrai PDF s'y ajoutait. Elle est passee dans
-// netlify/functions/analyse-background.mts, qui dispose de 15 minutes.
+// CE QUI N'EST PLUS ICI, ET POURQUOI
+//
+// Netlify coupe une Edge Function aux alentours de 35 secondes, sans lui laisser
+// le temps de repondre : le navigateur recoit un 500 vide, impossible a
+// expliquer a l'utilisateur. Toute tache qui lit le recit entier a donc migre
+// vers netlify/functions/analyse-background.mts et ses 15 minutes :
+// l'analyse a l'import le 2026-08-25 au matin, puis le decoupage en scenes, les
+// trois recherches d'elements manquants et la relecture d'un personnage le meme
+// jour. Elles enchainaient plusieurs appels au modele sur un budget unique, et
+// le depassaient des que le recit etait un peu long.
 
 // ---------------------------------------------------------------------------
 // Generation d'images
@@ -326,35 +279,6 @@ const editGeneratedImage = async (base64Image: string, prompt: string, reference
 // Fiches creees ou completees par l'IA
 // ---------------------------------------------------------------------------
 
-const regenerateCharacterDescription = async (text: string, characterName: string): Promise<Partial<Character>> => {
-  const texte = texteValide(text, "Le texte a relire", LIMITES.texte);
-  const nom = texteValide(characterName, "Le nom du personnage", 300);
-  const aLire = await preparerTexte(OUTILS, texte, "Relecture du recit");
-
-  const response = await genererAvecRepli("texteExpert", {
-    contents:
-      `Agis comme un expert litteraire. Relis le texte ci-dessous et concentre-toi sur le personnage "${nom}". ` +
-      `Extrais une description VISUELLE COMPLETE : age apparent, morphologie, visage, cheveux, yeux, peau, ` +
-      `vetements, accessoires, signes distinctifs. Ajoute son role dans l'histoire et sa psychologie. ` +
-      `Appuie-toi uniquement sur le texte, n'invente rien.\n\nTEXTE :\n"${aLire}"`,
-    config: {
-      maxOutputTokens: 4096,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          role: { type: Type.STRING },
-          shortDescription: { type: Type.STRING },
-          personality: { type: Type.STRING },
-          physicalDescription: { type: Type.STRING },
-        },
-      },
-    },
-  });
-
-  return lireJson(response.text || "", `Relecture de "${nom}"`);
-};
-
 const createCharacterFromPrompt = async (userPrompt: string): Promise<Omit<Character, "id" | "status" | "imageUrl">> => {
   const consigne = texteValide(userPrompt, "La description du personnage", LIMITES.prompt);
   const response = await genererAvecRepli("texteRapide", {
@@ -386,132 +310,6 @@ const createEnvironmentFromPrompt = async (
     config: { maxOutputTokens: 2048, responseMimeType: "application/json", responseSchema: SCHEMA_ENVIRONNEMENT },
   });
   return lireJson(response.text || "", "Creation du decor");
-};
-
-// ---------------------------------------------------------------------------
-// Recherche d'elements oublies dans le recit
-//
-// Ces trois fonctions recevaient bien le texte mais ne le transmettaient jamais
-// au modele : il repondait donc a partir de rien, en inventant. Le texte, la
-// quantite demandee et les elements deja trouves sont maintenant tous fournis.
-// ---------------------------------------------------------------------------
-
-/** Prepare le texte du recit pour une recherche ciblee. */
-const texteALire = async (text: string): Promise<string> => {
-  const texte = texteValide(text, "Le texte a analyser", LIMITES.texte);
-  return preparerTexte(OUTILS, texte, "Relecture du recit");
-};
-
-const findMissingEnvironments = async (
-  text: string,
-  existingNames: string[],
-  countHint?: number,
-  nameHints?: string
-): Promise<Omit<Environment, "id" | "status" | "imageUrl">[]> => {
-  const aLire = await texteALire(text);
-  const connus = listeValide(existingNames, "Les decors deja trouves");
-  const combien = nombreValide(countHint, "Le nombre de decors", 1, 30);
-  const indices = texteValide(nameHints, "Les indices", 1000, false);
-
-  const response = await genererAvecRepli("texteExpert", {
-    contents: `
-      Analyse le TEXTE ci-dessous et trouve ${combien ? `exactement ${combien}` : "les"} lieux ou decors importants
-      qui ne figurent PAS dans cette liste : ${connus.join(", ") || "(aucun pour l'instant)"}.
-      Privilegie les decors recurrents, ceux ou l'action revient plusieurs fois.
-      ${indices ? `Indices donnes par l'utilisateur, a suivre en priorite : ${indices}` : ""}
-      N'invente aucun lieu absent du texte. Si tu n'en trouves aucun, renvoie une liste vide.
-
-      TEXTE :
-      "${aLire}"
-    `,
-    config: {
-      maxOutputTokens: 8192,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: { environments: { type: Type.ARRAY, items: SCHEMA_ENVIRONNEMENT } },
-        required: ["environments"],
-      },
-    },
-  });
-
-  return lireJson(response.text || "", "Recherche de decors").environments || [];
-};
-
-const findMissingCharacters = async (
-  text: string,
-  existingNames: string[],
-  countHint?: number,
-  nameHints?: string
-): Promise<Omit<Character, "id" | "status" | "imageUrl">[]> => {
-  const aLire = await texteALire(text);
-  const connus = listeValide(existingNames, "Les personnages deja trouves");
-  const combien = nombreValide(countHint, "Le nombre de personnages", 1, 30);
-  const indices = texteValide(nameHints, "Les indices", 1000, false);
-
-  const response = await genererAvecRepli("texteExpert", {
-    contents: `
-      Analyse le TEXTE ci-dessous et trouve ${combien ? `exactement ${combien}` : "les"} personnages
-      qui ne figurent PAS dans cette liste : ${connus.join(", ") || "(aucun pour l'instant)"}.
-      Attention aux doublons deguises : un personnage deja liste sous un surnom ou un titre ne doit pas etre repropose.
-      ${indices ? `Indices donnes par l'utilisateur, a suivre en priorite : ${indices}` : ""}
-      Pour chacun, donne une description physique tres precise, exploitable par un illustrateur.
-      N'invente aucun personnage absent du texte. Si tu n'en trouves aucun, renvoie une liste vide.
-
-      TEXTE :
-      "${aLire}"
-    `,
-    config: {
-      maxOutputTokens: 8192,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: { characters: { type: Type.ARRAY, items: SCHEMA_PERSONNAGE } },
-        required: ["characters"],
-      },
-    },
-  });
-
-  return lireJson(response.text || "", "Recherche de personnages").characters || [];
-};
-
-const findMissingScenes = async (
-  text: string,
-  existingTitles: string[],
-  knownCharacters: string[],
-  countHint?: number,
-  contentHints?: string
-): Promise<Omit<Scene, "id" | "status" | "imageUrl">[]> => {
-  const aLire = await texteALire(text);
-  const connues = listeValide(existingTitles, "Les scenes deja trouvees");
-  const persos = listeValide(knownCharacters, "Les personnages connus");
-  const combien = nombreValide(countHint, "Le nombre de scenes", 1, 30);
-  const indices = texteValide(contentHints, "Les indices", 1000, false);
-
-  const response = await genererAvecRepli("texteExpert", {
-    contents: `
-      Analyse le TEXTE ci-dessous et trouve ${combien ? `exactement ${combien}` : "les"} scenes marquantes
-      qui ne figurent PAS dans cette liste : ${connues.join(" | ") || "(aucune pour l'instant)"}.
-      Personnages connus, a utiliser dans charactersPresent : ${persos.join(", ") || "aucun"}.
-      ${indices ? `Indices donnes par l'utilisateur, a suivre en priorite : ${indices}` : ""}
-      Pour chaque scene, recopie dans originalTextExcerpt le passage exact du texte qui lui correspond.
-      N'invente aucune scene absente du texte. Si tu n'en trouves aucune, renvoie une liste vide.
-
-      TEXTE :
-      "${aLire}"
-    `,
-    config: {
-      maxOutputTokens: 8192,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: { scenes: { type: Type.ARRAY, items: SCHEMA_SCENE } },
-        required: ["scenes"],
-      },
-    },
-  });
-
-  return lireJson(response.text || "", "Recherche de scenes").scenes || [];
 };
 
 // ---------------------------------------------------------------------------
@@ -582,111 +380,42 @@ const sendChatMessage = async (history: any[], message: string, image?: string, 
 };
 
 // ---------------------------------------------------------------------------
-// Decoupage en scenes
-// ---------------------------------------------------------------------------
-
-const analyzeScenes = async (text: string, knownCharacters: string[], sceneCount?: number): Promise<SceneAnalysisResult> => {
-  const texte = texteValide(text, "Le texte a decouper", LIMITES.texte);
-  const persos = listeValide(knownCharacters, "Les personnages connus");
-  const targetCount = nombreValide(sceneCount, "Le nombre de scenes", 1, 60) || 10;
-
-  const segments = segmentTextForScenes(texte, targetCount);
-  const allScenes: Omit<Scene, "id" | "status" | "imageUrl">[] = [];
-
-  const BATCH_SIZE = 3;
-  for (let i = 0; i < segments.length; i += BATCH_SIZE) {
-    const batch = segments.slice(i, i + BATCH_SIZE);
-
-    const batchResults = await Promise.all(
-      batch.map(async (segment, batchIndex) => {
-        const globalIndex = i + batchIndex;
-        try {
-          await wait(batchIndex * 300);
-
-          // Un segment plus long que ce qu'un appel peut lire est condense,
-          // jamais tronque : aucune partie du recit n'est ignoree.
-          const aLire =
-            segment.length > CHUNK_MAX ? await condenserSegment(OUTILS, segment, "Lecture du segment") : segment;
-
-          const response = await genererAvecRepli("texteExpert", {
-            contents:
-              `Analyse ce segment de recit (${globalIndex + 1} sur ${segments.length}). ` +
-              `Cree UNE SEULE scene principale qui resume l'action de ce segment. ` +
-              `Extrais : un titre court, le lieu, une description visuelle exploitable par un illustrateur, ` +
-              `et les personnages presents. Personnages connus : ${persos.join(", ") || "aucun"}. ` +
-              `N'utilise que des noms de cette liste quand c'est possible.\n\nSEGMENT :\n"${aLire}"`,
-            config: {
-              maxOutputTokens: 4000,
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  location: { type: Type.STRING },
-                  environmentDetail: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  charactersPresent: { type: Type.ARRAY, items: { type: Type.STRING } },
-                },
-              },
-            },
-          });
-
-          const meta = lireJson(response.text || "", `Scene ${globalIndex + 1}`);
-          return {
-            title: meta.title || `Scene ${globalIndex + 1}`,
-            location: meta.location || "Inconnu",
-            environmentDetail: meta.environmentDetail || "",
-            description: meta.description || "Description non generee.",
-            originalTextExcerpt: segment, // le texte integral du segment est conserve pour le livre
-            charactersPresent: meta.charactersPresent || [],
-          };
-        } catch (e: any) {
-          console.error(`Analyse du segment ${globalIndex} impossible`, e);
-          return {
-            title: `Scene ${globalIndex + 1} (a reprendre)`,
-            location: "Inconnu",
-            environmentDetail: "",
-            description: `Analyse impossible : ${e?.message || "erreur inconnue"}. Modifiez cette scene a la main ou relancez.`,
-            originalTextExcerpt: segment,
-            charactersPresent: [],
-          };
-        }
-      })
-    );
-
-    allScenes.push(...batchResults);
-  }
-
-  return { scenes: allScenes };
-};
-
-// ---------------------------------------------------------------------------
 // Routage
 // ---------------------------------------------------------------------------
 
+// Ne restent ici que les taches courtes : generer ou retoucher une image, et
+// inventer une fiche a partir de quelques mots. Tout ce qui lit un recit entier
+// est passe sur la fonction d'arriere-plan le 2026-08-25, elle dispose de 15
+// minutes la ou celle-ci est coupee vers 35 secondes.
 const handlers: Record<string, (...args: any[]) => Promise<any>> = {
   generateEnvironmentImage,
   generateCharacterImage,
   generateSceneImage,
   editGeneratedImage,
-  regenerateCharacterDescription,
   createCharacterFromPrompt,
   createSceneFromPrompt,
   createEnvironmentFromPrompt,
-  findMissingEnvironments,
-  findMissingCharacters,
-  findMissingScenes,
   sendChatMessage,
-  analyzeScenes,
 };
 
 // ---------------------------------------------------------------------------
 // Limitation du nombre de requetes
 //
-// Le compteur vit dans un stockage partage entre toutes les instances de la
-// fonction : un compteur garde en memoire vive repartait de zero a chaque
-// demarrage, et ne comptait donc presque rien.
-// Le plafond de depense fixe sur la console Google reste la protection ultime.
+// CE QUE CE COMPTEUR FAIT VRAIMENT
+//
+// Le commentaire qui figurait ici annoncait "un stockage partage entre toutes
+// les instances de la fonction". C'etait faux : le code n'appelait que la table
+// en memoire ci-dessous, locale au processus. Netlify fait tourner une Edge
+// Function dans plusieurs regions et plusieurs instances, le plafond reel
+// n'etait donc pas trente requetes par minute, mais trente par minute et par
+// instance vivante. Un commentaire qui decrit une protection inexistante est
+// pire que pas de commentaire du tout : il empeche de voir le trou.
+//
+// Le compteur passe maintenant par Netlify Blobs, comme celui de la fonction
+// d'arriere-plan, avec la table en memoire conservee en premiere barriere. Si
+// le stockage est indisponible, on laisse passer plutot que de bloquer quelqu'un
+// de legitime : le plafond de depense fixe sur la console Google reste la seule
+// protection qu'aucun contournement ne peut faire sauter.
 // ---------------------------------------------------------------------------
 
 const RATE_LIMIT = 30; // requetes
@@ -709,12 +438,47 @@ const compterEnMemoire = (ip: string): boolean => {
   return marques.length > RATE_LIMIT;
 };
 
+/**
+ * Le magasin partage, obtenu une seule fois.
+ *
+ * `undefined` signifie "pas encore essaye", `null` "essaye, indisponible". Sans
+ * cette distinction, une premiere tentative ratee serait rejouee a chaque
+ * requete, sur une fonction appelee des centaines de fois par generation.
+ */
+let magasinPartage: ReturnType<typeof getStore> | null | undefined;
+
+const obtenirMagasin = (): ReturnType<typeof getStore> | null => {
+  if (magasinPartage !== undefined) return magasinPartage;
+  try {
+    magasinPartage = getStore(MAGASIN_ANALYSES);
+  } catch (e) {
+    console.error("Netlify Blobs indisponible ici, le compteur de debit reste local :", e);
+    magasinPartage = null;
+  }
+  return magasinPartage;
+};
+
 const estLimite = async (ip: string): Promise<boolean> => {
-  // Une Edge Function garde son etat plus longtemps qu'une fonction classique,
-  // qui repartait de zero a chaque demarrage : ce compteur freine reellement les
-  // rafales. Le plafond de depense fixe sur la console Google reste toutefois la
-  // seule protection qu'aucun contournement ne peut faire sauter.
-  return compterEnMemoire(ip);
+  // Premiere barriere, instantanee : elle suffit a arreter une rafale venant
+  // d'une meme instance, sans le moindre aller-retour reseau.
+  if (compterEnMemoire(ip)) return true;
+
+  const magasin = obtenirMagasin();
+  if (!magasin) return false;
+
+  try {
+    const cle = `${PREFIXE_LIMITE_EDGE}${ip}`;
+    const maintenant = Date.now();
+    const anciennes: number[] = (await magasin.get(cle, { type: "json" })) || [];
+    const recentes = anciennes.filter((t: number) => maintenant - t < RATE_WINDOW_MS);
+    recentes.push(maintenant);
+    await magasin.setJSON(cle, recentes);
+    return recentes.length > RATE_LIMIT;
+  } catch (e) {
+    // Bloquer un utilisateur legitime serait pire que de rater un frein.
+    console.error("Compteur de debit partage indisponible, requete laissee passer :", e);
+    return false;
+  }
 };
 
 export default async (req: Request, context: Context) => {

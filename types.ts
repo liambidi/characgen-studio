@@ -24,6 +24,20 @@ export interface Environment {
   errorMessage?: string;
 }
 
+/**
+ * Libellé français des types de décor.
+ *
+ * Le modèle répond en anglais, parce que le schéma envoyé chez Google impose
+ * ces quatre valeurs. Elles étaient affichées telles quelles sur les cartes :
+ * on lisait « indoor » au milieu d'une interface entièrement en français.
+ */
+export const LIBELLE_TYPE_DECOR: Record<Environment['type'], string> = {
+  indoor: 'Intérieur',
+  outdoor: 'Extérieur',
+  space: 'Espace',
+  abstract: 'Abstrait',
+};
+
 export interface Scene {
   id: string;
   title: string;

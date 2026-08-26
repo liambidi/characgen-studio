@@ -3,7 +3,12 @@ import { verifierFichierRecit, EXTENSIONS_RECIT } from '../services/fichiers';
 import { notifierErreur } from '../services/notifications';
 
 interface FileUploadProps {
-  onFileSelect: (file: File) => void;
+  /**
+   * Recoit le fichier et les octets deja lus par la verification. Ils sont
+   * transmis plutot que relus : le fichier peut disparaitre entre les deux, et
+   * une seconde lecture d'un roman de 20 Mo ne sert a rien.
+   */
+  onFileSelect: (file: File, octets: Uint8Array) => void;
   isLoading: boolean;
   /**
    * Etape en cours de l'analyse, par exemple "Lecture du recit : 4 tranches sur 12".
@@ -15,6 +20,12 @@ interface FileUploadProps {
 
 const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progression }) => {
   const [isDragging, setIsDragging] = useState(false);
+  /**
+   * Vrai pendant la lecture du fichier. La verification n'est plus instantanee
+   * depuis qu'elle lit reellement les octets : sans cet indicateur, un double
+   * clic lancerait deux lectures concurrentes.
+   */
+  const [lectureEnCours, setLectureEnCours] = useState(false);
 
   /**
    * Filtre unique pour les deux chemins d'entree.
@@ -25,13 +36,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
    * verifie non plus : un PDF de plusieurs centaines de megaoctets figeait
    * l'onglet sans un mot d'explication.
    */
-  const accepter = useCallback((file: File | undefined | null) => {
+  const accepter = useCallback(async (file: File | undefined | null) => {
     if (!file) return;
+    setLectureEnCours(true);
     try {
-      verifierFichierRecit(file);
-      onFileSelect(file);
+      const octets = await verifierFichierRecit(file);
+      onFileSelect(file, octets);
     } catch (erreur) {
       notifierErreur("Fichier refusé.", erreur);
+    } finally {
+      setLectureEnCours(false);
     }
   }, [onFileSelect]);
 
@@ -49,7 +63,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    accepter(e.dataTransfer.files?.[0]);
+    void accepter(e.dataTransfer.files?.[0]);
   }, [accepter]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,8 +71,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
     // Vide le champ avant tout : sans cela, rechoisir le meme fichier apres un
     // refus ne declencherait plus aucun evenement.
     e.target.value = '';
-    accepter(file);
+    void accepter(file);
   };
+
+  /** L'analyse et la lecture bloquent toutes deux une nouvelle selection. */
+  const occupe = isLoading || lectureEnCours;
 
   return (
     <div id="upload-area" className="w-full max-w-2xl mx-auto px-4">
@@ -72,7 +89,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
           ${isDragging 
             ? 'bg-primary/5 ring-2 ring-primary scale-[1.02]' 
             : 'bg-surface-highlight/30 hover:bg-surface-highlight/50 ring-1 ring-white/10 hover:ring-white/20'}
-          ${isLoading ? 'opacity-50 pointer-events-none' : ''}
+          ${occupe ? 'opacity-50 pointer-events-none' : ''}
         `}
       >
         <input
@@ -81,7 +98,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
           className="hidden"
           accept={EXTENSIONS_RECIT.join(',')}
           onChange={handleChange}
-          disabled={isLoading}
+          disabled={occupe}
         />
 
         {/* Decorative Grid Background */}
@@ -96,19 +113,21 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isLoading, progre
              relative w-24 h-24 mb-8 rounded-full flex items-center justify-center transition-all duration-500
              ${isDragging ? 'bg-primary/20 shadow-[0_0_40px_rgba(99,102,241,0.3)]' : 'bg-white/5 group-hover:bg-white/10'}
           `}>
-            {isLoading ? (
+            {occupe ? (
                <div className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"></div>
             ) : null}
-            
-            <i className={`fas fa-file-import text-4xl transition-colors duration-300 ${isDragging || isLoading ? 'text-primary' : 'text-slate-400 group-hover:text-white'}`} aria-hidden="true"></i>
+
+            <i className={`fas fa-file-import text-4xl transition-colors duration-300 ${isDragging || occupe ? 'text-primary' : 'text-slate-400 group-hover:text-white'}`} aria-hidden="true"></i>
           </div>
-          
+
           <h2 className="text-3xl font-heading font-bold text-white mb-3 tracking-tight">
-            {isLoading ? 'Analyse en cours...' : 'Importez votre Histoire'}
+            {lectureEnCours ? 'Lecture du fichier...' : isLoading ? 'Analyse en cours...' : 'Importez votre Histoire'}
           </h2>
-          
+
           <p className="text-slate-400 max-w-sm mx-auto text-base leading-relaxed mb-8">
-            {isLoading
+            {lectureEnCours
+              ? "Vérification du contenu avant l'analyse."
+              : isLoading
               ? progression || "Préparation de l'analyse..."
               : <>Glissez-déposez votre PDF ou fichier texte ici. <br/>Notre IA se chargera d'extraire le casting et les lieux.</>}
           </p>

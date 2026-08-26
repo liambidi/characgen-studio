@@ -205,15 +205,22 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
             <div key={char.id} className="group glass-card rounded-2xl p-6 hover:bg-surface-highlight/60 transition-all duration-300 relative overflow-hidden">
               
               {/* Actions Overlay */}
-              <div className="absolute top-4 right-4 flex gap-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity transform translate-x-2 group-hover:translate-x-0 duration-300">
-                 <button 
+              {/* Ces deux boutons n'avaient ni libellé ni texte masqué, seulement une
+                  icône marquée décorative : un lecteur d'écran annonçait « bouton »
+                  deux fois de suite, sans dire lequel supprime. Ils restaient aussi
+                  invisibles sur écran tactile, faute de survol : ils apparaissent
+                  maintenant dès que le focus entre dans la carte. */}
+              <div className="absolute top-4 right-4 flex gap-2 z-20 opacity-0 max-sm:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity transform translate-x-2 group-hover:translate-x-0 duration-300">
+                 <button
                     onClick={() => openEditModal(char)}
+                    aria-label={`Modifier la fiche de ${char.name}`}
                     className="w-8 h-8 bg-black/50 hover:bg-primary backdrop-blur rounded-lg flex items-center justify-center text-white/70 hover:text-white transition"
                   >
                     <i className="fas fa-pen text-xs" aria-hidden="true"></i>
                   </button>
-                  <button 
+                  <button
                     onClick={() => onRemoveCharacter(char.id)}
+                    aria-label={`Supprimer le personnage ${char.name}`}
                     className="w-8 h-8 bg-black/50 hover:bg-red-500 backdrop-blur rounded-lg flex items-center justify-center text-white/70 hover:text-white transition"
                   >
                     <i className="fas fa-times text-xs" aria-hidden="true"></i>
@@ -258,7 +265,7 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
                      <div className="mt-2 p-2 bg-amber-500/5 border border-amber-500/20 rounded">
                         <div className="flex items-center gap-2 mb-1">
                             <i className="fas fa-terminal text-[10px] text-amber-500" aria-hidden="true"></i>
-                            <span className="text-[9px] font-mono text-amber-500 uppercase">Prompt Override</span>
+                            <span className="text-[9px] font-mono text-amber-500 uppercase">Consigne imposée</span>
                         </div>
                         <p className="text-[9px] text-amber-500/70 font-mono line-clamp-1 truncate">
                             {char.customVisualPrompt}
@@ -305,7 +312,7 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
                             className={`py-2 text-xs font-bold uppercase tracking-wide rounded-lg transition-all ${addMethod === m ? 'bg-primary text-white shadow-lg' : 'text-slate-400 hover:text-slate-300'}`}
                             onClick={() => setAddMethod(m as any)}
                         >
-                            {m === 'ai' ? 'IA Magic' : m === 'scan' ? 'Scanner' : 'Manuel'}
+                            {m === 'ai' ? 'IA rapide' : m === 'scan' ? 'Chercher' : 'Manuel'}
                         </button>
                     ))}
                 </div>
@@ -317,8 +324,8 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
                         <div className="bg-purple-500/10 p-4 rounded-xl border border-purple-500/20 flex gap-4">
                              <div className="text-2xl text-purple-400"><i className="fas fa-search" aria-hidden="true"></i></div>
                              <div>
-                                <h4 className="font-bold text-white text-sm">Scan Ciblé</h4>
-                                <p className="text-xs text-slate-400 mt-1">Indiquez ce qui manque, l'IA cherchera dans le texte.</p>
+                                <h4 className="font-bold text-white text-sm">Chercher dans le récit</h4>
+                                <p className="text-xs text-slate-300 mt-1">Indiquez ce qui manque, l'IA relit votre texte pour le trouver.</p>
                              </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -412,19 +419,20 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
                             </div>
                         </div>
 
-                         {/* Custom Prompt Field */}
+                         {/* Consigne libre, qui remplace la description au moment de générer l'image */}
                         <div className="pt-4 border-t border-white/10 mt-4">
                              <div className="flex justify-between items-center mb-2">
-                                <label className="text-[10px] font-bold text-amber-500 uppercase flex items-center gap-2">
-                                    <i className="fas fa-terminal" aria-hidden="true"></i> Custom Prompt Override
+                                <label htmlFor="consigne-perso" className="text-[10px] font-bold text-amber-500 uppercase flex items-center gap-2">
+                                    <i className="fas fa-terminal" aria-hidden="true"></i> Consigne imposée à l'IA
                                 </label>
-                                <span className="text-[9px] text-zinc-400 uppercase font-mono">Advanced</span>
+                                <span className="text-[9px] text-zinc-400 uppercase font-mono">Avancé</span>
                              </div>
-                             <textarea 
+                             <textarea
+                                id="consigne-perso"
                                 className="w-full bg-amber-950/10 border border-amber-900/30 rounded-lg p-3 text-amber-100 placeholder-amber-900/50 text-xs font-mono h-24 focus:border-amber-500 focus:outline-none resize-none"
-                                placeholder="Raw prompt... (This overrides standard generation logic)" 
-                                value={form.customVisualPrompt} 
-                                onChange={(e) => setForm({...form, customVisualPrompt: e.target.value})} 
+                                placeholder="Texte envoyé tel quel à l'IA. Il remplace la description physique ci-dessus au moment de dessiner."
+                                value={form.customVisualPrompt}
+                                onChange={(e) => setForm({...form, customVisualPrompt: e.target.value})}
                              />
                         </div>
                     </div>

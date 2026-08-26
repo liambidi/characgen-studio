@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Environment } from '../types';
+import { Environment, LIBELLE_TYPE_DECOR } from '../types';
 import { notifier } from '../services/notifications';
 
 interface EnvironmentReviewProps {
@@ -108,9 +108,19 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
            {environments.map(env => (
                <div key={env.id} className="bg-surface/50 border border-white/5 rounded-2xl p-6 hover:border-green-500/30 transition group relative">
-                   <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                       <button onClick={() => openEdit(env)} className="w-8 h-8 bg-black/50 hover:bg-white text-white hover:text-black rounded flex items-center justify-center"><i className="fas fa-pen text-xs" aria-hidden="true"></i></button>
-                       <button onClick={() => onRemoveEnvironment(env.id)} className="w-8 h-8 bg-black/50 hover:bg-red-500 text-white rounded flex items-center justify-center"><i className="fas fa-trash text-xs" aria-hidden="true"></i></button>
+                   {/* Boutons nommés pour un lecteur d'écran, et visibles sans survol
+                       sur écran tactile, où le survol n'existe pas. */}
+                   <div className="absolute top-4 right-4 flex gap-2 opacity-0 max-sm:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 transition">
+                       <button
+                           onClick={() => openEdit(env)}
+                           aria-label={`Modifier le décor ${env.name}`}
+                           className="w-8 h-8 bg-black/50 hover:bg-white text-white hover:text-black rounded flex items-center justify-center"
+                       ><i className="fas fa-pen text-xs" aria-hidden="true"></i></button>
+                       <button
+                           onClick={() => onRemoveEnvironment(env.id)}
+                           aria-label={`Supprimer le décor ${env.name}`}
+                           className="w-8 h-8 bg-black/50 hover:bg-red-500 text-white rounded flex items-center justify-center"
+                       ><i className="fas fa-trash text-xs" aria-hidden="true"></i></button>
                    </div>
                    
                    <div className="flex items-center gap-3 mb-4">
@@ -119,7 +129,7 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
                        </div>
                        <div>
                            <h3 className="font-bold text-white text-lg leading-tight">{env.name}</h3>
-                           <span className="text-xs text-slate-400 uppercase tracking-wider">{env.type} • {env.mood}</span>
+                           <span className="text-xs text-slate-400 uppercase tracking-wider">{LIBELLE_TYPE_DECOR[env.type] || env.type} • {env.mood}</span>
                        </div>
                    </div>
                    
@@ -152,7 +162,7 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
                                     className={`py-2 text-xs font-bold uppercase tracking-wide rounded-lg transition-all ${addMethod === m ? 'bg-green-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-300'}`}
                                     onClick={() => setAddMethod(m as any)}
                                 >
-                                    {m === 'ai' ? 'IA Magic' : m === 'scan' ? 'Scanner' : 'Manuel'}
+                                    {m === 'ai' ? 'IA rapide' : m === 'scan' ? 'Chercher' : 'Manuel'}
                                 </button>
                             ))}
                         </div>
@@ -164,8 +174,8 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
                                 <div className="bg-green-500/10 p-4 rounded-xl border border-green-500/20 flex gap-4">
                                      <div className="text-2xl text-green-400"><i className="fas fa-search" aria-hidden="true"></i></div>
                                      <div>
-                                        <h4 className="font-bold text-white text-sm">Scan de Lieux</h4>
-                                        <p className="text-xs text-slate-400 mt-1">L'IA analyse le texte pour trouver des décors récurrents manquants.</p>
+                                        <h4 className="font-bold text-white text-sm">Chercher dans le récit</h4>
+                                        <p className="text-xs text-slate-300 mt-1">L'IA relit votre texte pour trouver les décors récurrents qui manquent.</p>
                                      </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
@@ -211,7 +221,7 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
                                        <option value="space">Espace / SF</option>
                                        <option value="abstract">Abstrait</option>
                                    </select>
-                                   <input className="w-full bg-dark border border-white/10 rounded p-3 text-white" placeholder="Ambiance (Mood)" value={form.mood} onChange={e => setForm({...form, mood: e.target.value})} />
+                                   <input className="w-full bg-dark border border-white/10 rounded p-3 text-white" placeholder="Ambiance et lumière" value={form.mood} onChange={e => setForm({...form, mood: e.target.value})} />
                                </div>
 
                                <textarea className="w-full bg-dark border border-white/10 rounded p-3 text-white h-32" placeholder="Description visuelle..." value={form.description} onChange={e => setForm({...form, description: e.target.value})} />

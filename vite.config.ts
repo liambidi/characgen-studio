@@ -84,6 +84,16 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
+
+      // jsPDF importe ces trois bibliotheques pour sa methode `.html()`, qui
+      // fabrique un PDF en photographiant une page web. Le projet ne s'en sert
+      // pas : le livre est compose page par page avec `addImage` et `text`.
+      // Elles representaient pourtant environ 390 ko telecharges au premier clic
+      // sur « Telecharger en PDF », pour du code jamais execute.
+      // Voir services/module-vide.ts, qui explique quoi faire pour les retablir.
+      html2canvas: path.resolve(__dirname, 'services/module-vide.ts'),
+      dompurify: path.resolve(__dirname, 'services/module-vide.ts'),
+      canvg: path.resolve(__dirname, 'services/module-vide.ts'),
     }
   }
 });

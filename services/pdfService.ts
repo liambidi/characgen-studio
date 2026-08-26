@@ -11,45 +11,58 @@ import { notifier } from './notifications';
 /** Nombre de pages lues au maximum, pour ne pas saturer la mémoire du navigateur. */
 const PAGES_MAX = 500;
 
-export const extractTextFromFile = async (file: File): Promise<string> => {
+/**
+ * `octets` est le contenu deja lu par `verifierFichierRecit`. Il est transmis
+ * plutot que relu : le fichier peut avoir disparu ou changer d'etat entre les
+ * deux lectures, et relire un roman de 20 Mo ne sert a rien. Le parametre reste
+ * facultatif pour les appels qui n'ont que le fichier sous la main.
+ */
+export const extractTextFromFile = async (file: File, octets?: Uint8Array): Promise<string> => {
   if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-    return extraireDepuisPdf(file);
+    return extraireDepuisPdf(file, octets);
   }
-  return extraireDepuisTexte(file);
+  return extraireDepuisTexte(file, octets);
 };
 
-const extraireDepuisTexte = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
+const extraireDepuisTexte = (file: File, octets?: Uint8Array): Promise<string> => {
+  // `readAsText` decode en UTF-8 par defaut : le TextDecoder fait donc la meme
+  // chose, sans relire le fichier.
+  if (octets) return Promise.resolve(new TextDecoder('utf-8').decode(octets));
+
+  return new Promise((resolve, reject) => {
     const lecteur = new FileReader();
     lecteur.onload = (event) => resolve((event.target?.result as string) || '');
     lecteur.onerror = () => reject(new Error('Lecture du fichier impossible.'));
     lecteur.readAsText(file);
   });
+};
 
-const extraireDepuisPdf = async (file: File): Promise<string> => {
+const extraireDepuisPdf = async (file: File, octets?: Uint8Array): Promise<string> => {
   try {
     const pdfjsLib = await import('pdfjs-dist');
     // Le "worker" décode le PDF en arrière-plan, sans figer la page.
     // Vite l'intègre au projet ; il était auparavant téléchargé sur un CDN.
-    const { default: urlWorker } = await import('pdfjs-dist/build/pdf.worker.min.js?url');
+    // Le fichier porte l'extension .mjs depuis la version 4 de pdf.js, qui est
+    // passée aux modules ES : le chemin en .js ne existe plus.
+    const { default: urlWorker } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
     pdfjsLib.GlobalWorkerOptions.workerSrc = urlWorker;
 
-    const donnees = await file.arrayBuffer();
+    const donnees = octets ?? new Uint8Array(await file.arrayBuffer());
 
     const tache = pdfjsLib.getDocument({
       data: donnees,
-      // Coupe l'évaluation de code par pdf.js.
+      // NOTE DE SÉCURITÉ, à ne pas effacer par mégarde.
       //
-      // La version 3 de pdf.js installée ici est concernée par CVE-2024-4367 :
-      // un PDF fabriqué exprès peut faire exécuter du JavaScript de son choix
-      // dans la page, par le chemin de rendu des polices. Or l'application
-      // consiste précisément à ouvrir un PDF fourni par l'utilisateur.
+      // La version 3, installée ici jusqu'au 25 août 2026, était concernée par
+      // CVE-2024-4367 : un PDF fabriqué exprès pouvait faire exécuter du
+      // JavaScript de son choix dans la page, par le chemin de rendu des
+      // polices. Or l'application consiste précisément à ouvrir un PDF fourni
+      // par l'utilisateur. Le contournement était alors `isEvalSupported: false`.
       //
-      // `isEvalSupported: false` est la parade officielle et ne coûte qu'un
-      // rendu de police légèrement plus lent, invisible ici puisqu'on n'extrait
-      // que du texte. La correction de fond reste la montée en version majeure
-      // de pdfjs-dist, qui change son interface et demande d'être testée.
-      isEvalSupported: false,
+      // La faille est corrigée à la source depuis la version 4, et l'option a
+      // disparu de l'interface en version 6 : la passer est maintenant une
+      // erreur de typage. C'est donc la version installée qui protège, et rien
+      // d'autre. Un test vérifie que pdfjs-dist reste au-delà de la version 4.
       // Ces tables servent à décoder les polices non latines : elles évitent
       // que les accents ressortent en caractères illisibles. Elles sont copiées
       // dans les fichiers statiques du site par un greffon de vite.config.ts,

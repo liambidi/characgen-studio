@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Character, Environment } from '../types';
+import { Character, Environment, LIBELLE_TYPE_DECOR } from '../types';
 import { exportAssetsToZip, detailImage } from '../services/dataService';
 import { notifier, notifierErreur } from '../services/notifications';
 
@@ -253,7 +253,9 @@ const Gallery: React.FC<GalleryProps> = ({
 
             <div className="p-4 bg-white/5 border-t border-white/5">
                 <h3 className="font-heading font-bold text-white text-lg truncate" title={item.name}>{item.name}</h3>
-                <p className="text-xs text-primary font-bold uppercase tracking-wider">{activeTab === 'chars' ? item.role : item.type}</p>
+                <p className="text-xs text-primary font-bold uppercase tracking-wider">
+                    {activeTab === 'chars' ? item.role : (LIBELLE_TYPE_DECOR[item.type as Environment['type']] || item.type)}
+                </p>
             </div>
           </div>
         ))}

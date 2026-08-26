@@ -27,10 +27,13 @@
       Les styles vivent désormais dans index.css et tailwind.config.js.
     -->
 
-    <!-- Polices -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;700;800&display=swap" rel="stylesheet" />
+    <!--
+      Les polices sont installées avec le projet et déclarées dans index.css.
+      Elles étaient auparavant réclamées à fonts.googleapis.com à chaque visite :
+      le premier affichage dépendait d'un service extérieur, et chaque visiteur
+      signalait son passage à Google sans l'avoir demandé. Plus aucune ressource
+      de ce site ne sort de son propre domaine.
+    -->
   </head>
   <body>
     <div id="root"></div>
