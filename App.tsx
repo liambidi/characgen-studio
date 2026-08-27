@@ -1309,6 +1309,7 @@ const App: React.FC = () => {
           onOuvrir={ouvrirProjet}
           onNouveau={nouveauProjet}
           onImporter={handleImportClick}
+          onAide={() => setShowHelpModal(true)}
           onSupprimer={effacerProjet}
           libelleEtape={(valeur) => navItems.find(item => item.value === valeur)?.label ?? 'Analyse'}
           rangEtape={(valeur) => { const i = navItems.findIndex(item => item.value === valeur); return i >= 0 ? i + 1 : 1; }}

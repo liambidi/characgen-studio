@@ -340,3 +340,95 @@
 @media (max-width: 900px) {
   body .assistant-flottant { bottom: 88px; }
 }
+
+/* =========================================================================
+   ACCUEIL
+   ========================================================================= */
+
+.accueil {
+  --accueil-trait: rgba(148, 178, 235, 0.16);
+  --accueil-texte-doux: #9aa7c0;
+  width: 100%; max-width: 1240px; min-height: 100vh; margin: 0 auto;
+  padding: clamp(1.25rem, 3vw, 3rem) clamp(1.25rem, 4vw, 4rem) 4rem;
+  background: radial-gradient(70rem 35rem at 18% -15%, rgba(79, 70, 229, 0.18), transparent 56%), radial-gradient(38rem 25rem at 95% 15%, rgba(124, 58, 237, 0.10), transparent 62%);
+}
+.accueil__entete, .accueil__introduction, .accueil__section-titre, .accueil__pied, .accueil__avancement-ligne, .accueil__actions-recits, .accueil__pied-actions, .accueil__vide-actions, .accueil__faits { display: flex; align-items: center; }
+.accueil__entete { justify-content: space-between; min-height: 2.75rem; }
+.accueil__entete-actions { display: flex; align-items: center; gap: 0.55rem; }
+.accueil__marque { display: flex; align-items: center; gap: 0.65rem; color: #f2f5ff; font-family: 'Outfit Variable', Outfit, system-ui, sans-serif; font-size: 1rem; font-weight: 720; letter-spacing: -0.02em; }
+.accueil__marque em { color: #9ba1ff; font-style: normal; }
+.accueil__sceau, .accueil__vide-sceau { display: grid; place-items: center; color: #dcdeff; background: linear-gradient(145deg, #4f46e5, #7c3aed); box-shadow: 0 10px 24px rgba(67, 56, 202, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.accueil__sceau { width: 2rem; height: 2rem; border-radius: 0.6rem; font-size: 0.88rem; }
+.accueil__introduction { justify-content: space-between; gap: 1.5rem; margin: calc(clamp(3.5rem, 8vw, 7rem) - 60px) 0 clamp(1.75rem, 4vw, 3rem); }
+.accueil h1, .accueil h2, .accueil h3, .accueil p { margin: 0; }
+.accueil h1 { max-width: 17ch; color: #fff; font-size: clamp(2.35rem, 5vw, 4.65rem); font-weight: 720; line-height: 0.99; letter-spacing: -0.04em; text-wrap: balance; }
+.accueil__introduction p, .accueil__pied p { max-width: 43rem; margin-top: 1rem; color: var(--accueil-texte-doux); font-size: 0.98rem; line-height: 1.65; }
+.accueil__compteur, .accueil__section-titre > span { flex: none; color: #9aa7c0; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.accueil__recit-principal { display: grid; grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.1fr); overflow: hidden; border: 1px solid var(--accueil-trait); border-radius: 1rem; background: linear-gradient(135deg, rgba(25, 35, 59, 0.86), rgba(12, 18, 34, 0.92)); box-shadow: 0 28px 56px -34px rgba(0, 0, 0, 0.85); }
+.accueil__image-principale { position: relative; min-height: 22rem; overflow: hidden; background: #10182a; }
+.accueil__image { position: absolute; inset: 0; width: 100%; height: 100%; }
+.accueil__image-voile { position: absolute; inset: auto 0 0; height: 42%; background: linear-gradient(transparent, rgba(3, 7, 18, 0.82)); pointer-events: none; }
+.accueil__date { position: absolute; bottom: 1.2rem; left: 1.25rem; color: rgba(242, 245, 255, 0.88); font-size: 0.73rem; font-weight: 600; }
+.accueil__vignette-vide { display: grid; place-items: center; color: #818cf8; background: linear-gradient(145deg, #1e293b, #0b1120); font-size: 1.5rem; }
+.accueil__recit-corps { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; padding: clamp(1.5rem, 4vw, 3.1rem); }
+.accueil__etape { color: #aeb3ff; font-size: 0.7rem; font-weight: 750; letter-spacing: 0.11em; text-transform: uppercase; }
+.accueil__recit-corps h2 { width: 100%; margin-top: 0.8rem; overflow: hidden; color: #fff; font-size: clamp(1.75rem, 3.4vw, 3rem); font-weight: 700; line-height: 1.04; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+.accueil__etape-nom { margin-top: 0.6rem !important; color: #b4bfdb; font-size: 0.95rem; }
+.accueil__avancement { width: 100%; margin-top: 2rem; padding: 1rem 0; border-top: 1px solid var(--accueil-trait); border-bottom: 1px solid var(--accueil-trait); }
+.accueil__avancement-ligne { justify-content: space-between; gap: 1rem; color: #9aa7c0; font-size: 0.77rem; }
+.accueil__avancement-ligne strong { color: #e7eafe; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.accueil__jauge { height: 0.34rem; margin-top: 0.7rem; overflow: hidden; border-radius: 1rem; background: rgba(255, 255, 255, 0.10); }
+.accueil__jauge span { display: block; height: 100%; border-radius: inherit; background: #818cf8; box-shadow: 0 0 1rem rgba(129, 140, 248, 0.65); }
+.accueil__faits { flex-wrap: wrap; gap: 0.95rem 1.25rem; margin-top: 1.3rem; padding: 0; color: #aab5ca; font-size: 0.77rem; list-style: none; }
+.accueil__faits li { display: flex; align-items: center; gap: 0.45rem; }
+.accueil__faits i { color: #818cf8; font-size: 0.75rem; }
+.accueil__actions-recits { flex-wrap: wrap; gap: 0.45rem 1.1rem; margin-top: auto; padding-top: 2rem; }
+.accueil__bouton { display: inline-flex; align-items: center; justify-content: center; gap: 0.55rem; min-height: 2.75rem; padding: 0.65rem 1rem; border: 1px solid transparent; border-radius: 0.58rem; font: inherit; font-size: 0.82rem; font-weight: 720; line-height: 1; cursor: pointer; transition: transform 0.18s ease-out, color 0.18s ease-out, background-color 0.18s ease-out, border-color 0.18s ease-out, box-shadow 0.18s ease-out; }
+.accueil__bouton:hover { transform: translateY(-1px); }
+.accueil__bouton--principal { color: #fff; background: #6366f1; box-shadow: 0 10px 22px -13px rgba(129, 140, 248, 0.9); }
+.accueil__bouton--principal:hover { background: #4f46e5; box-shadow: 0 14px 24px -13px rgba(129, 140, 248, 1); }
+.accueil__bouton--secondaire { color: #d7deef; border-color: var(--accueil-trait); background: rgba(255, 255, 255, 0.045); }
+.accueil__bouton--secondaire:hover { color: #fff; border-color: rgba(148, 178, 235, 0.32); background: rgba(255, 255, 255, 0.085); }
+.accueil__aide, .accueil__lien-aide { display: inline-flex; align-items: center; gap: 0.45rem; border: 0; color: #aab5ca; background: transparent; font: inherit; font-size: 0.78rem; font-weight: 640; cursor: pointer; transition: color 0.16s ease-out; }
+.accueil__aide { min-height: 2.75rem; padding: 0 0.7rem; border-radius: 0.58rem; }
+.accueil__aide:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
+.accueil__lien-aide:hover { color: #c7cbff; }
+.accueil__supprimer, .accueil__carte-supprimer { border: 0; padding: 0; color: #78859f; background: transparent; font: inherit; font-size: 0.75rem; cursor: pointer; transition: color 0.16s ease-out; }
+.accueil__supprimer:hover, .accueil__carte-supprimer:hover { color: #fca5a5; }
+.accueil__bibliotheque { margin-top: clamp(3.5rem, 8vw, 6.5rem); }
+.accueil__repere { display: grid; grid-template-columns: minmax(15rem, 0.85fr) minmax(0, 1.5fr) auto; align-items: center; gap: 2rem; margin-top: 1rem; padding: 1.25rem 0; border-bottom: 1px solid var(--accueil-trait); }
+.accueil__repere h2 { color: #e9edfb; font-size: 1rem; font-weight: 680; letter-spacing: -0.018em; }
+.accueil__repere p { margin-top: 0.42rem; color: #8f9bb4; font-size: 0.77rem; line-height: 1.55; }
+.accueil__parcours { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+.accueil__parcours li { display: flex; align-items: flex-start; gap: 0.55rem; color: #a6b0c6; font-size: 0.72rem; line-height: 1.45; }
+.accueil__parcours i { flex: none; margin-top: 0.12rem; color: #9298ff; font-size: 0.75rem; }
+.accueil__parcours strong { display: block; color: #e5e9f8; font-size: 0.75rem; }
+.accueil__section-titre { justify-content: space-between; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--accueil-trait); }
+.accueil__section-titre h2, .accueil__pied h2 { color: #f4f6ff; font-size: 1.35rem; font-weight: 680; letter-spacing: -0.03em; }
+.accueil__grille { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.8rem; margin-top: 1rem; }
+.accueil__carte { position: relative; overflow: hidden; min-height: 10rem; border: 1px solid var(--accueil-trait); border-radius: 0.8rem; background: rgba(15, 23, 42, 0.5); transition: border-color 0.18s ease-out, background 0.18s ease-out, transform 0.18s ease-out; }
+.accueil__carte:hover { border-color: rgba(148, 178, 235, 0.34); background: rgba(30, 41, 59, 0.68); transform: translateY(-2px); }
+.accueil__carte-ouverture { display: grid; grid-template-columns: 5.6rem minmax(0, 1fr) auto; width: 100%; min-height: 9.5rem; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.accueil__carte-image { width: 100%; height: 100%; min-height: 9.5rem; }
+.accueil__carte-corps { min-width: 0; padding: 1rem 0.85rem; }
+.accueil__carte-corps h3 { overflow: hidden; color: #edf1fc; font-size: 0.92rem; font-weight: 680; letter-spacing: -0.02em; text-overflow: ellipsis; white-space: nowrap; }
+.accueil__carte-corps p { margin-top: 0.42rem; color: #93a0ba; font-size: 0.72rem; line-height: 1.45; }
+.accueil__carte-corps span { display: block; margin-top: 0.7rem; color: #b5bdfd; font-size: 0.69rem; font-variant-numeric: tabular-nums; }
+.accueil__carte-fleche { padding: 1rem 0.85rem 0 0; color: #75819a; font-size: 0.72rem; }
+.accueil__carte-supprimer { position: absolute; right: 0.85rem; bottom: 0.7rem; }
+.accueil__pied { justify-content: space-between; gap: 2rem; margin-top: clamp(4rem, 9vw, 7rem); padding-top: 2rem; border-top: 1px solid var(--accueil-trait); }
+.accueil__pied h2 { font-size: 1.55rem; }
+.accueil__pied p { margin-top: 0.45rem; }
+.accueil__stockage { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.8rem !important; color: #7e8ba5 !important; font-size: 0.73rem !important; }
+.accueil__stockage i { color: #8d95f8; }
+.accueil__pied-actions, .accueil__vide-actions { flex-wrap: wrap; gap: 0.65rem; }
+.accueil__vide { display: flex; flex-direction: column; align-items: center; max-width: 43rem; min-height: calc(100vh - 12rem); margin: 0 auto; padding: clamp(5rem, 15vh, 10rem) 0 4rem; text-align: center; }
+.accueil__vide-sceau { width: 4rem; height: 4rem; margin-bottom: 2rem; border-radius: 1.15rem; font-size: 1.45rem; }
+.accueil__vide h1 { max-width: 11ch; }
+.accueil__vide > p { max-width: 38rem; margin-top: 1.25rem; color: #aab5ca; font-size: 1rem; line-height: 1.75; text-wrap: balance; }
+.accueil__vide-actions { justify-content: center; margin-top: 2.1rem; }
+ .accueil__vide .accueil__repere { width: 100%; grid-template-columns: 1fr; margin-top: 3.5rem; text-align: left; }
+.accueil__vide .accueil__parcours { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.accueil__vide .accueil__lien-aide { justify-self: center; }
+@media (max-width: 780px) { .accueil { padding-bottom: 6.5rem; } .accueil__introduction, .accueil__pied { align-items: flex-start; flex-direction: column; } .accueil__recit-principal { grid-template-columns: 1fr; } .accueil__image-principale { min-height: 13.5rem; } .accueil__recit-corps { min-height: 28rem; } .accueil__repere { grid-template-columns: 1fr; gap: 1rem; } .accueil__grille { grid-template-columns: 1fr; } .accueil__carte-ouverture, .accueil__carte-image { min-height: 8.5rem; } .accueil__pied-actions { width: 100%; } }
+@media (max-width: 460px) { .accueil__entete .accueil__bouton { padding-right: 0.75rem; padding-left: 0.75rem; } .accueil__introduction { margin-top: calc(3.5rem - 60px); } .accueil h1 { font-size: 2.5rem; } .accueil__recit-corps { padding: 1.4rem; } .accueil__actions-recits { align-items: flex-start; flex-direction: column; } }
