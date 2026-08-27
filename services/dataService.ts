@@ -129,36 +129,181 @@ const effacer = async (cle: string): Promise<void> => {
 };
 
 // ---------------------------------------------------------------------------
-// Sauvegarde du projet
+// Les projets
+//
+// L'application n'a longtemps connu qu'un seul projet, ecrit sous une clef
+// fixe. Le magasin IndexedDB acceptait deja plusieurs clefs, c'est l'usage qui
+// s'en tenait a une. Chaque recit a maintenant son identifiant et sa propre
+// entree, plus un index qui les recense pour que la page d'accueil puisse les
+// afficher sans avoir a charger les images de chacun.
 // ---------------------------------------------------------------------------
 
-export const saveProjectLocal = async (projet: Omit<ProjetEnregistre, "misAJourLe">): Promise<void> => {
-  await ecrire(CLE_PROJET, { ...projet, misAJourLe: Date.now() });
-};
+const CLE_INDEX = "index_projets";
+const clePourProjet = (id: string) => `projet:${id}`;
 
-export const loadProjectLocal = async (): Promise<ProjetEnregistre | null> => {
-  const projet = await relire<ProjetEnregistre>(CLE_PROJET);
-  if (projet) return projet;
-  return recupererAncienneSauvegarde();
-};
+/**
+ * Ce que la page d'accueil a besoin de savoir d'un projet sans l'ouvrir.
+ *
+ * L'index est volontairement leger : quelques compteurs et une vignette
+ * reduite. Charger les huit projets pour en afficher la liste reviendrait a
+ * relire des dizaines de megaoctets d'illustrations a chaque ouverture.
+ */
+export interface FicheProjet {
+  id: string;
+  titre: string;
+  misAJourLe: number;
+  etape: AppStep;
+  nbPersonnages: number;
+  nbDecors: number;
+  nbScenes: number;
+  /** Scenes reellement illustrees, ce qui fait le nombre de planches du livre. */
+  nbPlanches: number;
+  /** Vignette de 320 px de large, refabriquee seulement quand le compte change. */
+  apercu?: string;
+}
 
-export const hasLocalSave = async (): Promise<boolean> => {
+const nouvelId = (): string => {
   try {
-    if (await relire<ProjetEnregistre>(CLE_PROJET)) return true;
-    return !!localStorage.getItem(ANCIENNE_CLE_LOCALSTORAGE);
+    return crypto.randomUUID();
   } catch {
-    return false;
+    return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 };
 
-export const supprimerSauvegardeLocale = async (): Promise<void> => {
-  await effacer(CLE_PROJET);
+/**
+ * Reduit une planche a 320 px de large.
+ *
+ * Une illustration en 2K pese un a deux megaoctets. Recopiee telle quelle dans
+ * l'index, elle rendrait la simple lecture de la liste aussi couteuse que
+ * l'ouverture des projets eux-memes, ce que cet index existe justement pour
+ * eviter. La reduction echoue silencieusement : une vignette absente est un
+ * defaut d'affichage, jamais une sauvegarde perdue.
+ */
+const fabriquerApercu = (source?: string): Promise<string | undefined> =>
+  new Promise((resolve) => {
+    if (!source || typeof document === "undefined") return resolve(undefined);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const largeur = 320;
+        const hauteur = Math.max(1, Math.round((image.naturalHeight / image.naturalWidth) * largeur));
+        const toile = document.createElement("canvas");
+        toile.width = largeur;
+        toile.height = hauteur;
+        const ctx = toile.getContext("2d");
+        if (!ctx) return resolve(undefined);
+        ctx.drawImage(image, 0, 0, largeur, hauteur);
+        resolve(toile.toDataURL("image/webp", 0.72));
+      } catch {
+        resolve(undefined);
+      }
+    };
+    image.onerror = () => resolve(undefined);
+    image.src = source;
+  });
+
+const lireIndex = async (): Promise<FicheProjet[]> => (await relire<FicheProjet[]>(CLE_INDEX)) ?? [];
+const ecrireIndex = (fiches: FicheProjet[]) => ecrire(CLE_INDEX, fiches);
+
+/**
+ * Fait passer une sauvegarde de l'ancien monde au nouveau.
+ *
+ * L'ordre compte : on ecrit d'abord la copie, ensuite l'index, et seulement
+ * apres on efface l'ancienne clef. Interrompue au milieu, la migration laisse
+ * au pire un doublon, jamais un projet perdu. La presence de l'index sert de
+ * marqueur : une fois ecrit, meme vide, la migration ne se rejoue plus.
+ */
+const migrerSiNecessaire = async (): Promise<void> => {
+  if ((await relire<FicheProjet[]>(CLE_INDEX)) !== null) return;
+
+  const ancien = (await relire<ProjetEnregistre>(CLE_PROJET)) ?? recupererAncienneSauvegarde();
+  if (!ancien) {
+    await ecrireIndex([]);
+    return;
+  }
+
+  const id = nouvelId();
+  await ecrire(clePourProjet(id), ancien);
+  await ecrireIndex([await construireFiche(id, ancien, undefined)]);
+
+  await effacer(CLE_PROJET).catch(() => {});
   try {
     localStorage.removeItem(ANCIENNE_CLE_LOCALSTORAGE);
   } catch {
     /* rien a faire si localStorage est inaccessible */
   }
 };
+
+const construireFiche = async (
+  id: string,
+  projet: ProjetEnregistre,
+  precedente: FicheProjet | undefined
+): Promise<FicheProjet> => {
+  const illustrees = projet.scenes.filter((s) => s.status === "completed");
+  const nbPlanches = illustrees.length;
+
+  // La vignette n'est refabriquee que si le nombre de planches a bouge : sans
+  // cette garde, chaque enregistrement automatique redecoderait une image.
+  const apercu =
+    precedente && precedente.apercu && precedente.nbPlanches === nbPlanches
+      ? precedente.apercu
+      : await fabriquerApercu(illustrees[0]?.imageUrl ?? projet.characters.find((c) => c.imageUrl)?.imageUrl);
+
+  return {
+    id,
+    titre: projet.titre || "Recit sans titre",
+    misAJourLe: projet.misAJourLe,
+    etape: projet.currentStep,
+    nbPersonnages: projet.characters.length,
+    nbDecors: projet.environments.length,
+    nbScenes: projet.scenes.length,
+    nbPlanches,
+    apercu,
+  };
+};
+
+/** La liste, du plus recemment touche au plus ancien. */
+export const listerProjets = async (): Promise<FicheProjet[]> => {
+  try {
+    await migrerSiNecessaire();
+    const fiches = await lireIndex();
+    return [...fiches].sort((a, b) => b.misAJourLe - a.misAJourLe);
+  } catch (e) {
+    console.error("Liste des projets illisible", e);
+    return [];
+  }
+};
+
+export const chargerProjet = async (id: string): Promise<ProjetEnregistre | null> => {
+  await migrerSiNecessaire();
+  return relire<ProjetEnregistre>(clePourProjet(id));
+};
+
+export const enregistrerProjet = async (
+  id: string,
+  projet: Omit<ProjetEnregistre, "misAJourLe">
+): Promise<void> => {
+  const complet: ProjetEnregistre = { ...projet, misAJourLe: Date.now() };
+  await ecrire(clePourProjet(id), complet);
+
+  const fiches = await lireIndex();
+  const fiche = await construireFiche(id, complet, fiches.find((f) => f.id === id));
+  await ecrireIndex([fiche, ...fiches.filter((f) => f.id !== id)]);
+};
+
+export const supprimerProjet = async (id: string): Promise<void> => {
+  await effacer(clePourProjet(id));
+  await ecrireIndex((await lireIndex()).filter((f) => f.id !== id));
+};
+
+export const renommerProjet = async (id: string, titre: string): Promise<void> => {
+  const projet = await relire<ProjetEnregistre>(clePourProjet(id));
+  if (projet) await ecrire(clePourProjet(id), { ...projet, titre });
+  await ecrireIndex((await lireIndex()).map((f) => (f.id === id ? { ...f, titre } : f)));
+};
+
+/** Un identifiant pour un recit qui n'existe pas encore. */
+export const creerIdProjet = (): string => nouvelId();
 
 /** Recupere une sauvegarde faite par l'ancienne version, dans localStorage. */
 const recupererAncienneSauvegarde = (): ProjetEnregistre | null => {

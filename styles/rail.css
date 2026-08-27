@@ -1,0 +1,342 @@
+/* =========================================================================
+   LE RAIL
+   =========================================================================
+
+   La navigation quitte le haut de la page et devient une colonne pleine
+   hauteur. Trois raisons, dans l'ordre d'importance :
+
+   1. Un bandeau collant prenait 64 pixels de hauteur sur tous les ecrans,
+      alors que la hauteur est la ressource rare : une grille de planches
+      defile verticalement, jamais horizontalement.
+   2. Les sept etapes tenaient dans une barre qui debordait des qu'on
+      reduisait la fenetre, avec un degrade pour signaler qu'il restait des
+      etapes cachees. En colonne, les sept intitules sont toujours lisibles
+      en entier.
+   3. Une colonne peut porter l'etat de chaque etape, ce qu'une rangee de
+      gelules ne peut pas : ou l'on en est, ce qui est fait, ce qui est
+      encore ferme, et combien il y a de choses dedans.
+
+   Trois etats sont distingues, et jamais par la seule couleur : une etape
+   faite porte une coche, l'etape en cours porte une barre a gauche et un
+   fond, une etape fermee porte un cadenas et l'attribut disabled.
+   ========================================================================= */
+
+.rail {
+  --rail-large: 236px;
+  --rail-etroit: 62px;
+  --rail-trait: rgba(148, 178, 235, 0.13);
+  --rail-trait-fort: rgba(148, 178, 235, 0.24);
+
+  width: var(--rail-large);
+  flex: none;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 12px 14px;
+  gap: 18px;
+  border-right: 1px solid var(--rail-trait);
+  /* La matiere du rail : un degre de plus que le fond en haut, exactement le
+     fond en bas. La colonne parait ainsi eclairee par le haut plutot que
+     peinte d'un aplat, sans avoir recours a une ombre portee. */
+  background: linear-gradient(180deg, #0e1421 0%, #0a0f1a 46%, #070b14 100%);
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.rail--replie { width: var(--rail-etroit); padding-left: 8px; padding-right: 8px; }
+
+/* --- L'enseigne ---------------------------------------------------------- */
+
+.rail__marque {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 6px 0;
+  min-height: 30px;
+}
+.rail__sceau {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: #c7cbff;
+  background: linear-gradient(160deg, #4f46e5, #7c3aed);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.rail__nom {
+  font-family: 'Outfit Variable', Outfit, system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  color: #eef2fb;
+  white-space: nowrap;
+}
+.rail__nom span { color: #8b90ff; }
+.rail--replie .rail__nom { display: none; }
+
+/* --- Le projet ouvert ---------------------------------------------------- */
+
+.rail__projet {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--rail-trait);
+  background: rgba(148, 178, 235, 0.045);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.rail__projet:hover { border-color: var(--rail-trait-fort); background: rgba(148, 178, 235, 0.08); }
+.rail__projet:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+.rail__projet b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #e6ecf8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rail__projet small {
+  display: block;
+  font-size: 10.5px;
+  color: #7d8aa5;
+  margin-top: 2px;
+}
+.rail--replie .rail__projet { display: none; }
+
+/* --- Les sept etapes ----------------------------------------------------- */
+
+.rail__nav { flex: 1; display: flex; flex-direction: column; gap: 1px; min-height: 0; overflow-y: auto; }
+.rail__nav::-webkit-scrollbar { width: 4px; }
+
+.rail__etape {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #97a3bd;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.rail__etape:hover:not(:disabled) { background: rgba(148, 178, 235, 0.07); color: #dde5f4; }
+.rail__etape:focus-visible { outline: 2px solid #818cf8; outline-offset: -2px; }
+.rail__etape:disabled { cursor: not-allowed; color: #5c6883; }
+
+.rail__rang {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: #66738c;
+  text-align: center;
+}
+.rail__libelle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Le compteur. Il ne repete jamais ce que dit deja l'etat : il dit combien. */
+.rail__compte {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #7d8aa5;
+  background: rgba(148, 178, 235, 0.1);
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+
+/* Etape faite : la coche remplace le rang, le libelle s'apaise. */
+.rail__etape.est-faite .rail__rang { color: #34d399; }
+.rail__etape.est-faite .rail__libelle { color: #8fa0bd; }
+
+/* Etape en cours : barre a gauche, fond, et une lumiere sur l'arete haute
+   pour que la selection paraisse soulevee et non simplement coloree. */
+.rail__etape.est-courante {
+  background: rgba(99, 102, 241, 0.16);
+  border-left-color: #6366f1;
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+.rail__etape.est-courante .rail__rang { color: #a5abff; }
+.rail__etape.est-courante .rail__compte { background: rgba(99, 102, 241, 0.3); color: #dfe1ff; }
+
+.rail--replie .rail__etape { grid-template-columns: 1fr; justify-items: center; padding: 9px 0; }
+.rail--replie .rail__libelle,
+.rail--replie .rail__compte { display: none; }
+.rail--replie .rail__rang { font-size: 12px; }
+
+/* --- Les sous-actions de l'etape en cours -------------------------------- */
+
+.rail__sous {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 3px 0 5px 21px;
+  padding-left: 11px;
+  border-left: 1px solid var(--rail-trait);
+}
+.rail__sous button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: #7d8aa5;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rail__sous button:hover { color: #dde5f4; background: rgba(148, 178, 235, 0.06); }
+.rail__sous button[aria-pressed='true'] { color: #eef2fb; }
+.rail__sous button span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #66738c;
+}
+.rail--replie .rail__sous { display: none; }
+
+/* --- Le pied ------------------------------------------------------------- */
+
+.rail__pied {
+  border-top: 1px solid var(--rail-trait);
+  padding-top: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rail--replie .rail__pied { flex-direction: column; align-items: center; }
+
+.rail__replier {
+  position: absolute;
+  right: -11px;
+  top: 74px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--rail-trait-fort);
+  background: #10182a;
+  color: #97a3bd;
+  font-size: 10px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.rail__replier:hover { color: #fff; border-color: #6366f1; }
+.rail__replier:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+
+/* =========================================================================
+   SOUS 900 PIXELS
+   La colonne ne peut pas retrecir indefiniment : en dessous de cette largeur
+   elle rendrait la zone de travail inutilisable. Elle bascule donc en barre
+   basse, ou les sept etapes deviennent sept reperes numerotes que le pouce
+   atteint. C'etait le point laisse ouvert dans la maquette.
+   ========================================================================= */
+
+@media (max-width: 900px) {
+  .rail {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 7px 10px calc(7px + env(safe-area-inset-bottom, 0px));
+    border-right: 0;
+    border-top: 1px solid var(--rail-trait);
+    background: rgba(8, 12, 20, 0.94);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    z-index: 60;
+  }
+  .rail__marque,
+  .rail__projet,
+  .rail__pied,
+  .rail__sous,
+  .rail__replier { display: none; }
+  .rail__nav { flex-direction: row; gap: 2px; overflow-x: auto; overflow-y: hidden; }
+  .rail__etape {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 3px;
+    min-width: 46px;
+    min-height: 46px;
+    padding: 5px 4px;
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 8px;
+  }
+  .rail__etape.est-courante { border-left-color: transparent; border-bottom-color: #6366f1; }
+  .rail__libelle { display: none; }
+  .rail__compte { font-size: 9px; padding: 1px 4px; }
+  .rail__rang { font-size: 12px; }
+}
+
+/* La zone de travail doit rendre la place que la barre basse lui prend. */
+@media (max-width: 900px) {
+  .coquille__contenu { padding-bottom: 76px; }
+}
+
+/* =========================================================================
+   LA COQUILLE
+   ========================================================================= */
+
+.coquille { min-height: 100vh; display: flex; align-items: stretch; }
+.coquille__contenu { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+
+@media (max-width: 900px) {
+  .coquille { display: block; }
+}
+
+/* L'entete d'etape, ramenee dans le flux du contenu maintenant qu'il n'y a
+   plus de bandeau colle en haut. */
+.entete-etape {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 22px 0 14px;
+  border-bottom: 1px solid rgba(148, 178, 235, 0.12);
+  margin-bottom: 18px;
+}
+
+@media print {
+  .rail, .rail__replier { display: none !important; }
+  .coquille { display: block; }
+}
+
+/* Le mot disparait quand le rail est replie : seule l icone reste. */
+.rail--replie .rail-mot { display: none; }
+
+/* La bulle de l'assistant vit en bas a droite. Sous 900 pixels, la barre
+   d'etapes occupe justement ce coin : la bulle recouvrait la septieme etape.
+   Le selecteur porte body pour passer devant la classe utilitaire bottom-6
+   sans avoir recours a !important, dont l'ordre de chargement des feuilles
+   ne garantissait pas l'issue. */
+@media (max-width: 900px) {
+  body .assistant-flottant { bottom: 88px; }
+}

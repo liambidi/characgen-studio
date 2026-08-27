@@ -1,14 +1,27 @@
-import React, { useState } from 'react';
-import { Scene, BookFormat } from '../types';
+import React, { useCallback, useState } from 'react';
+import { Scene, BookFormat, Cadrage } from '../types';
 import { detailImage } from '../services/dataService';
 import { notifier, notifierErreur } from '../services/notifications';
-import { libelleFormat } from '../services/formats';
+import {
+  FORMAT_LISEUR,
+  estFormatDuLiseur,
+  libelleFormat,
+  ratioPourCadrage,
+  remplissageDuLiseur,
+} from '../services/formats';
+import Liseur from './Liseur';
 
 interface BookViewerProps {
   scenes: Scene[];
   titre: string;
   onTitreChange: (titre: string) => void;
   format: BookFormat;
+  /**
+   * Le cadrage sert ici a une seule chose : dire la verite sur ce que le liseur
+   * va montrer. Sans lui, l'avertissement de format ne pourrait qu'affirmer
+   * qu'il y aura des marges, sans savoir combien.
+   */
+  cadrage: Cadrage;
   onRestart: () => void;
 }
 
@@ -32,31 +45,39 @@ const FORMATS_JSPDF: Record<string, string> = {
   webp: 'WEBP',
 };
 
-const BookViewer: React.FC<BookViewerProps> = ({ scenes, titre, onTitreChange, format, onRestart }) => {
+const BookViewer: React.FC<BookViewerProps> = ({ scenes, titre, onTitreChange, format, cadrage, onRestart }) => {
   const completedScenes = scenes.filter(s => s.status === 'completed' && s.imageUrl);
 
-  // Mise en page alternée et stable : elle ne doit pas changer entre deux rendus.
-  // Seules les inversions demandées à la main sont mémorisées ; l'alternance de
-  // départ se déduit du rang de la planche. L'ancienne version figeait la liste
-  // au montage : une scène illustrée après coup n'y figurait pas et repassait
-  // toutes les suivantes en « image en haut ».
+  /*
+    Mise en page alternée et stable : elle ne doit pas changer entre deux rendus.
+    Seules les inversions demandées à la main sont mémorisées ; l'alternance de
+    départ se déduit du rang de la planche. L'ancienne version figeait la liste
+    au montage : une scène illustrée après coup n'y figurait pas et repassait
+    toutes les suivantes de l'autre côté.
+
+    Dans le liseur, « en premier » veut dire à gauche de la double page. À
+    l'impression, faute de page voisine, cela veut dire en haut.
+  */
   const [inversions, setInversions] = useState<Record<string, boolean>>({});
 
-  const dispositionDe = (id: string, index: number): 'image-top' | 'text-top' => {
-      const parDefaut = index % 2 === 0 ? 'image-top' : 'text-top';
-      if (!inversions[id]) return parDefaut;
-      return parDefaut === 'image-top' ? 'text-top' : 'image-top';
-  };
+  const imageEnPremier = useCallback(
+    (sceneId: string, index: number): boolean => {
+      const parDefaut = index % 2 === 0;
+      return inversions[sceneId] ? !parDefaut : parDefaut;
+    },
+    [inversions]
+  );
+
+  const inverser = useCallback((sceneId: string) => {
+    setInversions(prev => ({ ...prev, [sceneId]: !prev[sceneId] }));
+  }, []);
 
   const [exportEnCours, setExportEnCours] = useState(false);
   const [progression, setProgression] = useState(0);
   const [editionTitre, setEditionTitre] = useState(false);
+  const [autresSorties, setAutresSorties] = useState(false);
 
   const titreAffiche = titre.trim() || "Sans titre";
-
-  const toggleLayout = (id: string) => {
-      setInversions(prev => ({ ...prev, [id]: !prev[id] }));
-  };
 
   const handlePrint = () => window.print();
 
@@ -300,10 +321,16 @@ ${planches}
     );
   }
 
-  return (
-    <div className="w-full animate-fade-in pb-20">
+  const auFormatDuLiseur = estFormatDuLiseur(format);
+  const remplissage = remplissageDuLiseur(format, cadrage);
+  const ratioDemande = ratioPourCadrage(format, cadrage);
 
-      <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-4 mb-8 print:hidden max-w-5xl mx-auto px-4">
+  return (
+    <div className="w-full animate-fade-in pb-16">
+
+      {/* --- En-tête ---------------------------------------------------- */}
+
+      <div className="flex flex-col lg:flex-row justify-between lg:items-end gap-5 mb-6 print:hidden max-w-5xl mx-auto px-4">
         <div className="min-w-0">
           {editionTitre ? (
             <input
@@ -329,166 +356,196 @@ ${planches}
             </button>
           )}
           <p className="text-slate-400 text-sm mt-1">
-            {completedScenes.length} planches · format {libelleFormat(format)}
+            {completedScenes.length} planche{completedScenes.length > 1 ? 's' : ''} · liseur au format{' '}
+            {libelleFormat(FORMAT_LISEUR)} · PDF au format {libelleFormat(format)}
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <button onClick={onRestart} className="px-4 py-2.5 min-h-[44px] bg-surface border border-white/10 hover:bg-white/5 text-slate-200 rounded-lg text-sm font-medium transition">
-             Nouveau projet
-          </button>
-
-          <button onClick={handleDownloadHTML} className="px-4 py-2.5 min-h-[44px] bg-surface hover:bg-white/10 border border-white/10 text-white rounded-lg text-sm font-bold shadow-lg flex items-center gap-2 transition">
-            <i className="fas fa-file-code" aria-hidden="true"></i> Ebook (HTML)
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={onRestart} className="px-4 py-2.5 min-h-[44px] bg-transparent border border-white/10 hover:bg-white/5 text-slate-300 rounded-lg text-sm font-medium transition">
+            Nouveau projet
           </button>
 
           <button
             onClick={handleDownloadPDF}
             disabled={exportEnCours}
-            className="px-5 py-2.5 min-h-[44px] bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-bold shadow-lg flex items-center gap-2 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="px-5 py-2.5 min-h-[44px] bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-bold shadow-lg shadow-primary/20 flex items-center gap-2 transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {exportEnCours
               ? <><i className="fas fa-circle-notch fa-spin" aria-hidden="true"></i> {progression}%</>
               : <><i className="fas fa-file-pdf" aria-hidden="true"></i> Télécharger en PDF</>}
           </button>
 
-          <button onClick={handlePrint} className="w-11 h-11 flex items-center justify-center bg-white text-dark hover:bg-slate-200 rounded-lg font-bold shadow-lg transition" aria-label="Imprimer le livre">
-            <i className="fas fa-print" aria-hidden="true"></i>
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setAutresSorties(o => !o)}
+              aria-expanded={autresSorties}
+              className="w-11 h-11 flex items-center justify-center bg-transparent border border-white/10 hover:bg-white/5 text-slate-300 rounded-lg transition"
+              aria-label="Autres façons de sortir le livre"
+            >
+              <i className="fas fa-ellipsis" aria-hidden="true"></i>
+            </button>
+
+            {autresSorties && (
+              <div className="absolute right-0 top-full mt-2 z-40 w-64 bg-surface border border-white/10 rounded-xl shadow-2xl p-1.5 animate-fade-in">
+                <button
+                  onClick={() => { setAutresSorties(false); handleDownloadHTML(); }}
+                  className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-white/5 transition flex items-start gap-3"
+                >
+                  <i className="fas fa-file-code text-slate-400 mt-1 w-4 text-center" aria-hidden="true"></i>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-white">Ebook HTML</span>
+                    <span className="block text-[11px] text-slate-400 leading-snug">Archive ZIP, images à part, lisible hors connexion.</span>
+                  </span>
+                </button>
+                <button
+                  onClick={() => { setAutresSorties(false); handlePrint(); }}
+                  className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-white/5 transition flex items-start gap-3"
+                >
+                  <i className="fas fa-print text-slate-400 mt-1 w-4 text-center" aria-hidden="true"></i>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-white">Imprimer</span>
+                    <span className="block text-[11px] text-slate-400 leading-snug">Une planche par page, via le navigateur.</span>
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="w-full bg-[#1c1917] p-0 md:p-8 rounded-3xl shadow-[inset_0_0_100px_rgba(0,0,0,0.8)] border border-white/5 print:p-0 print:bg-white print:border-none print:shadow-none">
+      {/* --- Avertissement de format ------------------------------------ */}
 
-          <div id="book-content" className="bg-[#fcfbf9] text-slate-900 shadow-2xl max-w-[1200px] mx-auto overflow-hidden print:shadow-none print:w-full">
-
-            {/* Couverture */}
-            <div className="min-h-screen flex flex-col items-center justify-center p-12 text-center border-b border-slate-200 relative overflow-hidden print:break-after-page">
-                <div className="relative z-10 max-w-3xl w-full border-[12px] border-double border-slate-900 p-8 md:p-20 bg-white shadow-xl">
-                    <span className="block text-xs font-bold tracking-[0.4em] uppercase mb-10 text-slate-400">Collection Studio</span>
-                    <h1 className="text-4xl md:text-7xl font-serif font-black mb-8 text-slate-900 leading-none tracking-tight break-words">
-                        {titreAffiche}
-                    </h1>
-                    <div className="w-32 h-2 bg-red-700 mx-auto mb-10"></div>
-
-                    {completedScenes[0]?.imageUrl && (
-                        <div className="w-full max-w-md mx-auto aspect-video mb-10 shadow-2xl overflow-hidden border-4 border-slate-900">
-                            <img src={completedScenes[0].imageUrl} alt={`Illustration de couverture : ${completedScenes[0].title}`} className="w-full h-full object-cover" />
-                        </div>
-                    )}
-
-                    <p className="font-serif italic text-slate-500 text-xl md:text-2xl">Une création graphique assistée par IA</p>
-                </div>
+      {!auFormatDuLiseur && (
+        <div
+          role="status"
+          className="max-w-5xl mx-auto px-4 mb-6 print:hidden"
+        >
+          <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3">
+            <i className="fas fa-triangle-exclamation text-amber-300 mt-0.5" aria-hidden="true"></i>
+            <div className="text-sm text-amber-100/90 leading-relaxed">
+              <p className="font-semibold text-amber-200">
+                Ce projet est réglé sur {libelleFormat(format)}, le liseur feuillette en {libelleFormat(FORMAT_LISEUR)}.
+              </p>
+              <p className="mt-1">
+                {remplissage > 0.995 ? (
+                  <>
+                    Vos illustrations, demandées en {ratioDemande}, remplissent quand même la page du liseur :
+                    rien ne se perd à l'écran. Seul le PDF sortira au format {format.nom}.
+                  </>
+                ) : (
+                  <>
+                    Vos illustrations, demandées en {ratioDemande}, occuperont{' '}
+                    <span className="font-mono">{Math.round(remplissage * 100)}&nbsp;%</span> de la page du liseur,
+                    le reste restera blanc. Le liseur montre l'image entière plutôt que de la rogner sans le dire.
+                    Le PDF, lui, sort toujours au format {format.nom}.
+                  </>
+                )}
+              </p>
             </div>
-
-            {/* Planches */}
-            <div className="flex flex-col bg-white">
-                {completedScenes.map((scene, index) => {
-                    const isImgTop = dispositionDe(scene.id, index) === 'image-top';
-
-                    return (
-                        <div key={scene.id} className="min-h-screen w-full flex flex-col relative group print:break-after-page border-b-8 border-slate-100">
-
-                            <button
-                                onClick={() => toggleLayout(scene.id)}
-                                className="absolute top-4 right-4 z-50 px-4 py-2 min-h-[44px] bg-black/80 hover:bg-black text-white rounded-full text-xs font-bold uppercase tracking-wide opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity print:hidden shadow-lg backdrop-blur"
-                            >
-                                <i className="fas fa-arrows-up-down mr-2" aria-hidden="true"></i> Inverser image et texte
-                            </button>
-
-                            <div className={`w-full h-[65vh] md:h-[75vh] bg-slate-50 relative print:h-[60vh] ${isImgTop ? 'order-1' : 'order-2'}`}>
-                                <div className="w-full h-full flex items-center justify-center p-4 md:p-8">
-                                    <img
-                                        src={scene.imageUrl}
-                                        alt={scene.title}
-                                        className="w-full h-full object-contain shadow-2xl print:shadow-none max-w-5xl mx-auto"
-                                    />
-                                    <div className="absolute bottom-4 left-4 md:left-8 text-[10px] font-sans font-bold text-slate-400 uppercase tracking-widest bg-white/90 backdrop-blur px-3 py-1.5 rounded border border-slate-200 shadow-sm">
-                                        Planche {index + 1}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className={`w-full min-h-[30vh] p-8 md:p-16 flex flex-col justify-center bg-white print:h-auto print:py-8 ${isImgTop ? 'order-2' : 'order-1 border-b border-slate-100'}`}>
-                                <div className="max-w-3xl mx-auto w-full text-center">
-
-                                    <div className="flex items-center justify-center gap-4 mb-6">
-                                        <div className="h-[1px] w-12 bg-slate-300"></div>
-                                        <div className="text-xs font-bold tracking-[0.2em] text-slate-400 uppercase">
-                                            {scene.location}
-                                        </div>
-                                        <div className="h-[1px] w-12 bg-slate-300"></div>
-                                    </div>
-
-                                    <h2 className="text-3xl md:text-5xl font-serif font-black text-slate-900 mb-8 leading-tight">
-                                        {scene.title}
-                                    </h2>
-
-                                    {/* Le texte du récit était affiché en slate-400 sur fond blanc, soit un
-                                        contraste d'environ 2,5 pour 1 quand la norme en demande 4,5. Le défaut
-                                        était déjà connu du code, qui forçait ce texte en noir à l'impression
-                                        mais le laissait gris clair à l'écran, alors que c'est le contenu
-                                        principal de la page. */}
-                                    <div className="font-serif text-lg md:text-xl leading-loose text-slate-700">
-                                        {scene.originalTextExcerpt ? (
-                                            <p className="max-w-2xl mx-auto whitespace-pre-wrap text-left">{scene.originalTextExcerpt}</p>
-                                        ) : (
-                                            <p className="text-slate-600 italic text-base">{scene.description}</p>
-                                        )}
-                                    </div>
-
-                                </div>
-                            </div>
-
-                        </div>
-                    );
-                })}
-            </div>
-
-            {/* Quatrième de couverture */}
-            <div className="min-h-screen bg-slate-900 text-slate-300 flex flex-col items-center justify-center p-12 text-center print:break-before-page">
-                <div className="w-24 h-24 border border-slate-700 flex items-center justify-center rounded-full mb-8">
-                    <i className="fas fa-feather-alt text-4xl text-slate-400" aria-hidden="true"></i>
-                </div>
-                <p className="font-serif italic text-2xl md:text-3xl mb-16 max-w-2xl leading-relaxed text-slate-300">
-                    {titreAffiche}
-                </p>
-                <div className="flex items-center gap-6 text-sm font-sans uppercase tracking-[0.3em] text-slate-300">
-                    <div className="h-[1px] w-16 bg-slate-600"></div>
-                    <span>CharacGen Studio</span>
-                    <div className="h-[1px] w-16 bg-slate-600"></div>
-                </div>
-                <div className="mt-6 text-xs font-mono text-slate-300">
-                    Édition générée le {new Date().toLocaleDateString('fr-FR')}
-                </div>
-            </div>
-
           </div>
+        </div>
+      )}
+
+      {/* --- Le liseur --------------------------------------------------- */}
+
+      <Liseur
+        scenes={completedScenes}
+        titre={titreAffiche}
+        imageEnPremier={imageEnPremier}
+        onInverser={inverser}
+      />
+
+      {/* --- Version imprimable ------------------------------------------
+          Le liseur est un objet d'écran : il n'a pas de sens sur du papier,
+          où l'on ne tourne pas les pages avec un bouton. L'impression garde
+          donc la forme linéaire, une planche par page, dans l'ordre et avec
+          l'alternance choisis dans le liseur. */}
+
+      <div id="book-content" className="hidden print:block bg-white text-slate-900">
+        <div className="print-couverture text-center py-24 px-12 break-after-page">
+          <h1 className="text-6xl font-serif font-black mb-8 leading-none">{titreAffiche}</h1>
+          <div className="w-28 h-1.5 bg-red-700 mx-auto mb-8"></div>
+          <p className="font-serif italic text-xl text-slate-500">Une création graphique assistée par IA</p>
+        </div>
+
+        {completedScenes.map((scene, index) => {
+          const hautDeLaPage = imageEnPremier(scene.id, index);
+
+          const illustration = (
+            <div key="img" className="w-full flex items-center justify-center py-4">
+              <img src={scene.imageUrl} alt={scene.title} className="max-w-full max-h-[58vh] object-contain" />
+            </div>
+          );
+
+          const texte = (
+            <div key="txt" className="w-full max-w-3xl mx-auto text-center py-4">
+              {scene.location && (
+                <p className="text-[10px] font-sans font-bold tracking-[0.25em] uppercase text-slate-500 mb-3">
+                  {scene.location}
+                </p>
+              )}
+              <h2 className="text-3xl font-serif font-black mb-5 leading-tight">{scene.title}</h2>
+              <p className="font-serif text-base leading-loose text-left whitespace-pre-wrap text-slate-800">
+                {scene.originalTextExcerpt || scene.description}
+              </p>
+              <p className="mt-6 text-[10px] font-sans tracking-[0.2em] uppercase text-slate-400">
+                Planche {index + 1}
+              </p>
+            </div>
+          );
+
+          return (
+            <div key={scene.id} className="px-10 py-8 break-after-page flex flex-col justify-center">
+              {hautDeLaPage ? [illustration, texte] : [texte, illustration]}
+            </div>
+          );
+        })}
+
+        <div className="text-center py-24 px-12">
+          <p className="font-serif italic text-2xl mb-10">{titreAffiche}</p>
+          <p className="text-xs font-sans tracking-[0.3em] uppercase text-slate-500">CharacGen Studio</p>
+          <p className="mt-3 text-[10px] font-mono text-slate-400">
+            Édition générée le {new Date().toLocaleDateString('fr-FR')}
+          </p>
+        </div>
       </div>
 
       <style>{`
         @media print {
             @page { margin: 0; size: auto; }
+
+            /* Le fond de l'application est presque noir. Sans ces deux lignes,
+               l'apercu avant impression montrait des titres noirs sur fond
+               noir : la page papier reste blanche parce que les navigateurs
+               n'impriment pas les fonds par defaut, mais l'apercu, lui, donnait
+               un livre illisible, et le reglage « imprimer les couleurs
+               d'arriere-plan » suffisait a le rendre vrai sur le papier. */
+            html, body { background: #ffffff !important; }
+
             body * { visibility: hidden; }
             .print\\:hidden { display: none !important; }
+
+            /* #book-content descend de body : la regle ci-dessus le masquait
+               lui aussi, donc son propre fond blanc ne se peignait pas, seuls
+               ses enfants reapparaissaient. */
+            #book-content,
+            #book-content * { visibility: visible; }
 
             #book-content {
                 width: 100% !important;
                 margin: 0 !important;
                 box-shadow: none !important;
+                background: #ffffff !important;
                 position: absolute;
                 left: 0;
                 top: 0;
             }
-            #book-content * { visibility: visible; }
 
-            img { max-height: 60vh !important; page-break-inside: avoid; }
-            .text-slate-900 { color: #000000 !important; }
-
-            /* La règle qui suivait forçait TOUT .text-slate-400 en noir, y compris
-               la quatrieme de couverture, qui est sur fond sombre : elle y produisait
-               du texte noir sur fond noir. Elle n'existait que pour rattraper le
-               texte du récit, désormais lisible à l'écran comme sur le papier. */
+            #book-content img { page-break-inside: avoid; }
+            #book-content .text-slate-800,
+            #book-content h1,
+            #book-content h2 { color: #000000 !important; }
         }
       `}</style>
     </div>

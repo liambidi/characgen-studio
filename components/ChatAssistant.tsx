@@ -111,14 +111,14 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ contexte }) => {
         onClick={() => setIsOpen(!isOpen)}
         aria-label={isOpen ? "Fermer l'assistant" : "Ouvrir l'assistant créatif"}
         aria-expanded={isOpen}
-        className="fixed bottom-6 left-6 z-[90] w-14 h-14 bg-white text-black rounded-full shadow-2xl flex items-center justify-center hover:bg-slate-200 transition print:hidden"
+        className="assistant-flottant fixed bottom-6 right-6 z-[90] w-14 h-14 bg-white text-black rounded-full shadow-2xl flex items-center justify-center hover:bg-slate-200 transition print:hidden"
       >
         <i className={`fas ${isOpen ? 'fa-times' : 'fa-comment-dots'} text-lg`} aria-hidden="true"></i>
       </button>
 
       {isOpen && (
         <div
-          className="fixed bottom-24 left-4 sm:left-6 z-[90] w-[min(24rem,calc(100vw-2rem))] h-[min(32rem,calc(100vh-9rem))] bg-surface border border-white/10 rounded-2xl shadow-2xl flex flex-col animate-fade-in overflow-hidden print:hidden"
+          className="fixed bottom-24 right-4 sm:right-6 z-[90] w-[min(24rem,calc(100vw-2rem))] h-[min(32rem,calc(100vh-9rem))] bg-surface border border-white/10 rounded-2xl shadow-2xl flex flex-col animate-fade-in overflow-hidden print:hidden"
           role="dialog"
           aria-label="Assistant créatif"
         >

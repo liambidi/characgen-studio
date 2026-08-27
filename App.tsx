@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import {
-    saveProjectLocal,
-    loadProjectLocal,
-    hasLocalSave,
-    supprimerSauvegardeLocale,
+    listerProjets,
+    chargerProjet,
+    enregistrerProjet as ecrireProjet,
+    supprimerProjet,
+    creerIdProjet,
+    type FicheProjet,
+    type ProjetEnregistre,
     exportProjectToJSON,
     importProjectFromJSON,
     exportAssetsToZip,
@@ -29,10 +32,12 @@ import ChatAssistant from './components/ChatAssistant';
 import ImageEditorModal from './components/ImageEditorModal';
 import CentreNotifications from './components/CentreNotifications';
 import ChoixFormat from './components/ChoixFormat';
+import Rail from './components/Rail';
+import Accueil from './components/Accueil';
 
 import { AppStep, Character, Environment, Scene, AnalysisResult, GenConfig, Cadrage } from './types';
 import { extractTextFromFile } from './services/pdfService';
-import { BOOK_FORMATS, formatParId, ratioPourCadrage } from './services/formats';
+import { BOOK_FORMATS, FORMAT_LISEUR_ID, formatParId, ratioPourCadrage } from './services/formats';
 import {
   analyzeStory,
   generateCharacterImage,
@@ -71,7 +76,7 @@ const messageDe = (e: unknown): string =>
     e instanceof Error ? e.message : typeof e === 'string' ? e : 'Erreur inconnue';
 
 /** Ce qu'une sauvegarde enregistre, sans la date, ajoutée au moment de l'écriture. */
-type ProjetASauvegarder = Parameters<typeof saveProjectLocal>[0];
+type ProjetASauvegarder = Parameters<typeof ecrireProjet>[1];
 
 /**
  * Nombre d'images générées de front.
@@ -122,6 +127,28 @@ const DELAI_SAUVEGARDE_GENERATION_MS = 8_000;
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
+
+  /*
+    Quel ecran est a l'affiche, et quel recit est ouvert.
+
+    On demarre sur le travail plutot que sur l'accueil : au tout premier
+    passage il n'y a aucun projet, et faire traverser une liste vide avant de
+    pouvoir deposer un fichier serait une porte a ouvrir pour rien. La liste
+    prend la main juste apres, si elle n'est pas vide.
+  */
+  const [ecran, setEcran] = useState<'accueil' | 'travail'>('travail');
+  const [projetId, setProjetId] = useState<string>(creerIdProjet);
+  const [fiches, setFiches] = useState<FicheProjet[]>([]);
+
+  // L'enregistrement automatique lit l'identifiant ici plutot que de le
+  // capturer : sa fonction est memorisee une fois pour toutes, et repartirait
+  // sinon sur le projet ouvert au premier rendu.
+  const projetIdRef = useRef(projetId);
+  useEffect(() => { projetIdRef.current = projetId; }, [projetId]);
+
+  const rafraichirFiches = useCallback(() => {
+    listerProjets().then(setFiches).catch(() => {});
+  }, []);
   const [titre, setTitre] = useState<string>("");
   const [fullText, setFullText] = useState<string>("");
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -139,12 +166,23 @@ const App: React.FC = () => {
    * La résolution, elle, était figée à 1K sans que rien ne permette d'en
    * changer, y compris pour un A4 destiné à l'impression.
    */
-  const [currentFormatId, setCurrentFormatId] = useState<string>('a4_l');
+  /*
+    Le format propose par defaut est celui du liseur.
+
+    C'etait 'a4_l', l'A4 a l'italienne. Ce reglage ne pouvait pas rester : le
+    liseur ouvre deux pages cote a cote, et deux A4 italiennes ouvertes font un
+    bandeau de 2,83 pour 1, ou plus rien ne se lit. Moyen, 16 x 24 cm, donne une
+    double page de 4:3 et tombe exactement sur le 2:3 que Gemini sait produire,
+    donc aucune marge et aucun rognage. Voir services/formats.ts pour la mesure.
+
+    Les projets deja enregistres gardent leur propre format : ce defaut ne
+    s'applique qu'aux nouveaux.
+  */
+  const [currentFormatId, setCurrentFormatId] = useState<string>(FORMAT_LISEUR_ID);
   const [cadrage, setCadrage] = useState<Cadrage>('pleine-page');
   const [resolution, setResolution] = useState<GenConfig['resolution']>('1K');
 
   const [showHelpModal, setShowHelpModal] = useState(false);
-  const [hasLocal, setHasLocal] = useState(false);
   const [showSaveMenu, setShowSaveMenu] = useState(false);
   const [espace, setEspace] = useState<EspaceDisque | null>(null);
   const [sauvegardeAuto, setSauvegardeAuto] = useState<'inactive' | 'en-cours' | 'faite'>('inactive');
@@ -205,7 +243,18 @@ const App: React.FC = () => {
     scenes.filter(s => s.status === 'completed').length;
 
   useEffect(() => {
-    hasLocalSave().then(setHasLocal).catch(() => setHasLocal(false));
+    listerProjets()
+      .then(liste => {
+        setFiches(liste);
+        if (liste.length > 0) {
+          setEcran('accueil');
+          // Le projet le plus recent devient la cible par defaut : sans cela,
+          // le premier enregistrement automatique ecrirait sous l'identifiant
+          // neuf tire au demarrage et creerait un doublon vide.
+          setProjetId(liste[0].id);
+        }
+      })
+      .catch(() => {});
     mesurerEspace().then(setEspace).catch(() => setEspace(null));
   }, []);
 
@@ -243,11 +292,11 @@ const App: React.FC = () => {
         ecritureADemanderRef.current = false;
         const instantane = projetRef.current;
         if (!instantane) break;
-        await saveProjectLocal(instantane);
+        await ecrireProjet(projetIdRef.current, instantane);
       } while (ecritureADemanderRef.current);
 
-      setHasLocal(true);
       setSauvegardeAuto('faite');
+      rafraichirFiches();
       mesurerEspace().then(setEspace).catch(() => {});
     } catch (e) {
       setSauvegardeAuto('inactive');
@@ -255,7 +304,7 @@ const App: React.FC = () => {
     } finally {
       ecritureEnCoursRef.current = false;
     }
-  }, []);
+  }, [rafraichirFiches]);
 
   useEffect(() => {
     if (projetVide) return;
@@ -303,8 +352,8 @@ const App: React.FC = () => {
   const handleSaveLocal = async () => {
     if (projetVide) { notifier("Il n'y a rien à sauvegarder pour l'instant.", 'info'); return; }
     try {
-        await saveProjectLocal({ titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId, cadrage, resolution });
-        setHasLocal(true);
+        await ecrireProjet(projetId, { titre, characters, environments, scenes, stylePrompt, fullText, currentStep: step, formatId: currentFormatId, cadrage, resolution });
+        rafraichirFiches();
         notifier("Projet sauvegardé dans ce navigateur.");
         setShowSaveMenu(false);
     } catch (e) {
@@ -347,30 +396,21 @@ const App: React.FC = () => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      if (!projetVide) {
-          const remplacer = await confirmer(
-              "Remplacer le projet en cours ?",
-              "Le projet actuellement ouvert sera remplacé par le contenu du fichier. Pensez à l'exporter d'abord si vous voulez le conserver.",
-              { libelleConfirmer: "Remplacer", dangereux: true }
-          );
-          if (!remplacer) { if (fileInputRef.current) fileInputRef.current.value = ""; return; }
-      }
+      // La demande de confirmation qui se trouvait ici avertissait que le
+      // projet ouvert allait etre remplace. Ce n'est plus vrai : un import
+      // ouvre un recit de plus, l'ancien reste dans la liste. Une confirmation
+      // qui annonce un danger inexistant apprend a cliquer sans lire.
 
       setLoading(true);
       try {
           const data = await importProjectFromJSON(file);
-          setTitre(data.titre || "");
-          setCharacters(data.characters || []);
-          setScenes(data.scenes || []);
-          setEnvironments(data.environments || []);
-          setStylePrompt(data.stylePrompt || "");
-          setFullText(data.fullText || "");
-          if (data.formatId) handleFormatChange(data.formatId);
-          // Cadrage et resolution suivent le format : sans eux, un projet
-          // rouvert repartait en pleine page 1K sans le signaler.
-          if (data.cadrage) setCadrage(data.cadrage);
-          if (data.resolution) setResolution(data.resolution);
-          setStep(data.currentStep ?? AppStep.REVIEW_CHARS);
+          // Un fichier importe devient un recit a part entiere, avec son
+          // identifiant : il ne remplace plus celui qui etait ouvert.
+          const id = creerIdProjet();
+          setProjetId(id);
+          projetIdRef.current = id;
+          appliquerProjet(data);
+          setEcran('travail');
           notifier("Projet importé.");
       } catch (err) {
           notifierErreur("Import impossible.", err);
@@ -380,53 +420,36 @@ const App: React.FC = () => {
       }
   };
 
-  const handleLoadLocal = async () => {
-      if (!projetVide) {
-          const ecraser = await confirmer(
-              "Restaurer la sauvegarde ?",
-              "Le projet en cours sera remplacé par la dernière sauvegarde de ce navigateur.",
-              { libelleConfirmer: "Restaurer", dangereux: true }
-          );
-          if (!ecraser) return;
-      }
-      try {
-        setLoading(true);
-        const data = await loadProjectLocal();
-        if (data) {
-            setTitre(data.titre || "");
-            setCharacters(data.characters || []);
-            setScenes(data.scenes || []);
-            setEnvironments(data.environments || []);
-            setStylePrompt(data.stylePrompt || "");
-            setFullText(data.fullText || "");
-            if (data.formatId) handleFormatChange(data.formatId);
-          // Cadrage et resolution suivent le format : sans eux, un projet
-          // rouvert repartait en pleine page 1K sans le signaler.
-          if (data.cadrage) setCadrage(data.cadrage);
-          if (data.resolution) setResolution(data.resolution);
-            setStep(data.currentStep ?? AppStep.REVIEW_CHARS);
-            notifier("Sauvegarde restaurée.");
-        } else {
-            notifier("Aucune sauvegarde trouvée dans ce navigateur.", 'info');
-        }
-      } catch (e) {
-        notifierErreur("Restauration impossible.", e);
-      } finally {
-        setLoading(false);
-      }
-      setShowSaveMenu(false);
+  /**
+   * Pose un projet charge sur l'ecran.
+   *
+   * Ce bloc etait recopie mot pour mot dans l'import de fichier et dans la
+   * restauration, et les deux copies avaient deja diverge une fois sur le
+   * cadrage. Il n'existe plus qu'ici.
+   */
+  const appliquerProjet = (data: ProjetEnregistre) => {
+      setTitre(data.titre || "");
+      setCharacters(data.characters || []);
+      setScenes(data.scenes || []);
+      setEnvironments(data.environments || []);
+      setStylePrompt(data.stylePrompt || "");
+      setFullText(data.fullText || "");
+      if (data.formatId) handleFormatChange(data.formatId);
+      // Cadrage et resolution suivent le format : sans eux, un projet rouvert
+      // repartait en pleine page 1K sans le signaler.
+      if (data.cadrage) setCadrage(data.cadrage);
+      if (data.resolution) setResolution(data.resolution);
+      setStep(data.currentStep ?? AppStep.REVIEW_CHARS);
   };
 
-  /** Repart de zéro, après confirmation. Remplace les boutons qui ne faisaient rien. */
-  const handleRestart = async () => {
-      const confirme = await confirmer(
-          "Commencer un nouveau projet ?",
-          "Les personnages, décors et illustrations générés seront effacés de cet écran. Exportez-les d'abord si vous voulez les garder.",
-          { libelleConfirmer: "Tout effacer", dangereux: true }
-      );
-      if (!confirme) return;
-
+  /** Vide l'ecran et prend un identifiant neuf, sans rien detruire. */
+  const nouveauProjet = () => {
       arreterGeneration();
+      const id = creerIdProjet();
+      setProjetId(id);
+      // L'enregistrement automatique lit la reference, pas l'etat : sans cette
+      // ligne, la premiere ecriture du recit neuf irait ecraser le precedent.
+      projetIdRef.current = id;
       setTitre("");
       setFullText("");
       setCharacters([]);
@@ -435,9 +458,66 @@ const App: React.FC = () => {
       setStylePrompt("");
       setError(null);
       setStep(AppStep.UPLOAD);
-      await supprimerSauvegardeLocale().catch(() => {});
-      setHasLocal(false);
-      notifier("Nouveau projet.", 'info');
+      setEcran('travail');
+  };
+
+  const ouvrirProjet = async (id: string) => {
+      try {
+          setLoading(true);
+          const data = await chargerProjet(id);
+          if (!data) {
+              notifier("Ce récit est introuvable.", 'info');
+              rafraichirFiches();
+              return;
+          }
+          arreterGeneration();
+          appliquerProjet(data);
+          setProjetId(id);
+          projetIdRef.current = id;
+          setEcran('travail');
+      } catch (e) {
+          notifierErreur("Ouverture impossible.", e);
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  const effacerProjet = async (id: string) => {
+      try {
+          await supprimerProjet(id);
+      } catch (e) {
+          notifierErreur("Suppression impossible.", e);
+          return;
+      }
+      const liste = await listerProjets().catch(() => [] as FicheProjet[]);
+      setFiches(liste);
+      notifier("Récit supprimé.", 'info');
+
+      // Le recit efface etait celui qu'on avait sous les yeux : le laisser a
+      // l'ecran donnerait un projet qui n'existe plus et que la sauvegarde
+      // automatique recreerait aussitot.
+      if (id === projetId) {
+          nouveauProjet();
+          if (liste.length > 0) setEcran('accueil');
+      }
+  };
+
+  /**
+   * Repart d'un recit neuf.
+   *
+   * Cette action effacait la sauvegarde locale. Elle n'a plus de raison de
+   * detruire quoi que ce soit : le recit en cours reste dans la liste, et
+   * l'ecran repart simplement sur un identifiant neuf.
+   */
+  const handleRestart = async () => {
+      const confirme = await confirmer(
+          "Commencer un nouveau récit ?",
+          "Le récit en cours est conservé : vous le retrouverez dans la liste de vos projets.",
+          { libelleConfirmer: "Nouveau récit" }
+      );
+      if (!confirme) return;
+      nouveauProjet();
+      notifier("Nouveau récit.", 'info');
   };
 
   // --- Import du récit --------------------------------------------------------
@@ -1054,6 +1134,56 @@ const App: React.FC = () => {
   const etapeCourante = navItems.find(item => item.value === step)?.label || "";
   const indexEtape = navItems.findIndex(item => item.value === step);
 
+  /*
+    Ce que le rail affiche en plus d'un simple libelle : ce qui est fait, et
+    combien il y a dedans.
+
+    « Fait » et « accessible » sont deux questions differentes, et les
+    confondre serait faux : l'etape Decors est accessible des qu'il y a des
+    personnages, mais elle n'est faite que lorsqu'un decor existe. Le compteur,
+    lui, ne repete jamais l'etat : il dit une quantite, pas un statut.
+  */
+  const imagesTotal = characters.length + environments.length;
+  const imagesFaites =
+    characters.filter(c => c.status === 'completed').length +
+    environments.filter(e => e.status === 'completed').length;
+  const scenesFaites = scenes.filter(s => s.status === 'completed').length;
+
+  const etapeFaite = (valeur: AppStep): boolean => {
+    switch (valeur) {
+      case AppStep.UPLOAD: return fullText.length > 0;
+      case AppStep.REVIEW_CHARS: return characters.length > 0;
+      case AppStep.REVIEW_ENVIRONMENTS: return environments.length > 0;
+      case AppStep.GENERATION_HUB: return imagesTotal > 0 && imagesFaites === imagesTotal;
+      case AppStep.SCENE_REVIEW: return scenes.length > 0;
+      case AppStep.SCENE_GALLERY: return scenes.length > 0 && scenesFaites === scenes.length;
+      // Le livre n'est jamais « fait » : on y revient autant qu'on veut, et
+      // lui coller une coche laisserait croire que le travail est termine.
+      default: return false;
+    }
+  };
+
+  const compteEtape = (valeur: AppStep): string | undefined => {
+    switch (valeur) {
+      case AppStep.REVIEW_CHARS: return characters.length ? String(characters.length) : undefined;
+      case AppStep.REVIEW_ENVIRONMENTS: return environments.length ? String(environments.length) : undefined;
+      case AppStep.GENERATION_HUB: return imagesTotal ? `${imagesFaites}/${imagesTotal}` : undefined;
+      case AppStep.SCENE_REVIEW: return scenes.length ? String(scenes.length) : undefined;
+      case AppStep.SCENE_GALLERY: return scenes.length ? `${scenesFaites}/${scenes.length}` : undefined;
+      case AppStep.FINAL_BOOK: return scenesFaites ? String(scenesFaites) : undefined;
+      default: return undefined;
+    }
+  };
+
+  const etapesRail = navItems.map(item => ({
+    value: item.value,
+    label: item.label,
+    icon: item.icon,
+    accessible: isStepAccessible(item.value),
+    faite: etapeFaite(item.value),
+    compte: compteEtape(item.value),
+  }));
+
   /** Contexte transmis à l'assistant pour qu'il connaisse le projet en cours. */
   const contexteAssistant = {
       etape: etapeCourante,
@@ -1065,86 +1195,49 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-dark flex flex-col font-sans text-slate-200">
+    <div className="coquille bg-dark font-sans text-slate-200">
       <a href="#contenu-principal" className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-[200] focus:px-4 focus:py-2 focus:bg-primary focus:text-white focus:rounded-lg focus:font-bold">
         Aller au contenu
       </a>
 
-      <header className="sticky top-0 z-50 border-b border-white/5 bg-dark/70 backdrop-blur-xl print:hidden">
-        <div className="max-w-[1400px] mx-auto px-4 h-16 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-3 shrink-0 md:mr-8">
-            <h1 className="text-lg sm:text-xl font-bold font-heading whitespace-nowrap">CharacGen <span className="text-primary">Studio</span></h1>
-          </div>
-
-          {/* Sur petit écran, la barre défile : un dégradé sur le bord droit signale
-              qu'il y a d'autres étapes, la barre de défilement étant masquée. */}
-          <div className="relative flex-1 min-w-0 hidden sm:block">
-            <nav aria-label="Étapes du projet" className="flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth">
-               {navItems.map((item) => {
-                  const accessible = isStepAccessible(item.value);
-                  const active = step === item.value;
-                  return (
-                      <button
-                        key={item.value}
-                        onClick={() => accessible && setStep(item.value)}
-                        disabled={!accessible}
-                        aria-current={active ? 'step' : undefined}
-                        title={accessible ? item.label : `${item.label} : étape pas encore accessible`}
-                        className={`px-4 py-2 min-h-[44px] rounded-full flex items-center gap-2 text-xs font-semibold whitespace-nowrap transition-colors
-                          ${active ? 'bg-white/10 text-white' : accessible ? 'text-slate-300 hover:text-white hover:bg-white/5' : 'text-slate-400 cursor-not-allowed'}`}
-                      >
-                          {/* Une étape verrouillée porte un cadenas : l'information ne repose
-                              pas seulement sur la couleur, et le libellé reste lisible. */}
-                          <i className={`fas ${accessible ? item.icon : 'fa-lock'} ${active ? 'text-primary' : ''}`} aria-hidden="true"></i>
-                          {item.label}
-                          {!accessible && <span className="sr-only">, étape pas encore accessible</span>}
-                      </button>
-                  )
-               })}
-            </nav>
-            <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-10 bg-gradient-to-l from-dark to-transparent lg:hidden" aria-hidden="true"></div>
-          </div>
-
-          {/* Sur téléphone, la barre entière ne tient pas : on affiche l'étape en cours. */}
-          <div className="sm:hidden flex-1 min-w-0 text-center">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Étape {indexEtape + 1} sur {navItems.length}</span>
-            <span className="text-sm font-semibold text-white truncate block">{etapeCourante}</span>
-          </div>
-
-          <div className="flex items-center gap-1 sm:gap-3 md:ml-6 shrink-0">
-             {generationEnCours && (
+      {ecran === 'travail' && (
+        <Rail
+          etapes={etapesRail}
+          courante={step}
+          onEtape={setStep}
+          titreProjet={titre}
+          sousTitre={`Étape ${indexEtape + 1} sur ${navItems.length} · ${etapeCourante}`}
+          onAccueil={() => { rafraichirFiches(); setEcran('accueil'); }}
+          pied={
+            <>
+              {generationEnCours && (
                 <button
                   onClick={handleArretDemande}
                   aria-label="Arrêter la génération en cours"
-                  className="px-3 sm:px-4 py-2 min-h-[44px] min-w-[44px] justify-center bg-red-500/15 hover:bg-red-500/25 text-red-300 hover:text-red-200 rounded-lg transition font-bold text-xs border border-red-500/30 flex items-center gap-2"
+                  className="w-full min-h-[38px] px-3 bg-red-500/15 hover:bg-red-500/25 text-red-300 hover:text-red-200 rounded-lg transition font-bold text-xs border border-red-500/30 flex items-center justify-center gap-2"
                 >
-                    <i className="fas fa-stop" aria-hidden="true"></i> <span className="hidden sm:inline">Arrêter</span>
+                  <i className="fas fa-stop" aria-hidden="true"></i> <span className="rail-mot">Arrêter</span>
                 </button>
-             )}
+              )}
 
-             <button
-                onClick={() => setShowHelpModal(true)}
-                className="w-11 h-11 flex items-center justify-center hover:text-white text-slate-300 hover:bg-white/5 rounded-lg transition"
-                aria-label="Ouvrir l'aide"
-             >
-                <i className="fas fa-question" aria-hidden="true"></i>
-             </button>
-
-             <div className="relative" ref={menuSauvegardeRef}>
-                 <button
-                    onClick={() => setShowSaveMenu(!showSaveMenu)}
-                    aria-expanded={showSaveMenu}
-                    aria-haspopup="menu"
-                    aria-label="Sauvegarder le projet"
-                    className="flex items-center gap-2 px-3 sm:px-4 py-2 min-h-[44px] min-w-[44px] justify-center bg-primary/20 hover:bg-primary/30 text-primary hover:text-white rounded-lg transition font-bold text-xs border border-primary/20"
-                 >
-                     <i className="fas fa-save" aria-hidden="true"></i>
-                     <span className="hidden sm:inline">Sauvegarder</span>
-                     {sauvegardeAuto === 'faite' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" title="Projet enregistré" aria-hidden="true"></span>}
-                 </button>
+              <div className="relative flex-1 min-w-0" ref={menuSauvegardeRef}>
+                <button
+                  onClick={() => setShowSaveMenu(!showSaveMenu)}
+                  aria-expanded={showSaveMenu}
+                  aria-haspopup="menu"
+                  aria-label="Sauvegarder le projet"
+                  className="w-full min-h-[38px] px-3 flex items-center justify-center gap-2 bg-primary/20 hover:bg-primary/30 text-primary hover:text-white rounded-lg transition font-bold text-xs border border-primary/20"
+                >
+                  <i className="fas fa-save" aria-hidden="true"></i>
+                  <span className="rail-mot">Sauvegarder</span>
+                  {sauvegardeAuto === 'faite' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" title="Projet enregistré" aria-hidden="true"></span>}
+                </button>
 
                  {showSaveMenu && (
-                     <div role="menu" className="absolute top-full right-0 mt-2 w-[min(17rem,calc(100vw-2rem))] bg-surface border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[60] animate-fade-in">
+                     /* Le menu s'ouvrait vers le bas depuis un bandeau. Depuis le
+                        pied du rail, il doit remonter, sans quoi il sortirait par
+                        le bas de la fenetre. */
+                     <div role="menu" className="absolute bottom-full left-0 mb-2 w-[min(17rem,calc(100vw-2rem))] bg-surface border border-white/10 rounded-xl shadow-2xl overflow-hidden z-[60] animate-fade-in">
                          <div className="p-3 border-b border-white/5 bg-white/5">
                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Projet</p>
                              {sauvegardeAuto !== 'inactive' && (
@@ -1157,11 +1250,12 @@ const App: React.FC = () => {
                          <button role="menuitem" onClick={handleSaveLocal} className="w-full text-left px-4 py-3 min-h-[44px] hover:bg-white/10 flex items-center gap-3 text-sm text-slate-200 hover:text-white transition">
                              <i className="fas fa-hdd w-5" aria-hidden="true"></i> Enregistrer maintenant
                          </button>
-                         {hasLocal && (
-                            <button role="menuitem" onClick={handleLoadLocal} className="w-full text-left px-4 py-3 min-h-[44px] hover:bg-white/10 flex items-center gap-3 text-sm text-slate-200 hover:text-white transition">
-                                <i className="fas fa-rotate-left w-5" aria-hidden="true"></i> Restaurer la sauvegarde
-                            </button>
-                         )}
+                         {/* « Restaurer la sauvegarde » a disparu d'ici : il n'y a plus
+                             une sauvegarde unique a restaurer mais une liste de recits,
+                             et elle a sa propre page. */}
+                         <button role="menuitem" onClick={() => { setShowSaveMenu(false); rafraichirFiches(); setEcran('accueil'); }} className="w-full text-left px-4 py-3 min-h-[44px] hover:bg-white/10 flex items-center gap-3 text-sm text-slate-200 hover:text-white transition">
+                             <i className="fas fa-layer-group w-5" aria-hidden="true"></i> Tous mes récits
+                         </button>
                          <button role="menuitem" onClick={handleExportJSON} className="w-full text-left px-4 py-3 min-h-[44px] hover:bg-white/10 flex items-center gap-3 text-sm text-slate-200 hover:text-white transition">
                              <i className="fas fa-file-export w-5" aria-hidden="true"></i> Exporter le projet (.json)
                          </button>
@@ -1192,14 +1286,36 @@ const App: React.FC = () => {
                          )}
                      </div>
                  )}
-             </div>
+              </div>
 
-             <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleImportFile} aria-label="Choisir un fichier projet à importer" />
-          </div>
-        </div>
-      </header>
+              <button
+                onClick={() => setShowHelpModal(true)}
+                className="w-[38px] h-[38px] flex items-center justify-center shrink-0 text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition"
+                aria-label="Ouvrir l'aide"
+              >
+                <i className="fas fa-question" aria-hidden="true"></i>
+              </button>
+            </>
+          }
+        />
+      )}
 
-      <main id="contenu-principal" className="flex-1 flex flex-col relative z-10 w-full max-w-[1400px] mx-auto px-4 sm:px-6">
+      <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleImportFile} aria-label="Choisir un fichier projet à importer" />
+
+      <div className="coquille__contenu">
+      {ecran === 'accueil' ? (
+        <Accueil
+          fiches={fiches}
+          onOuvrir={ouvrirProjet}
+          onNouveau={nouveauProjet}
+          onImporter={handleImportClick}
+          onSupprimer={effacerProjet}
+          libelleEtape={(valeur) => navItems.find(item => item.value === valeur)?.label ?? 'Analyse'}
+          rangEtape={(valeur) => { const i = navItems.findIndex(item => item.value === valeur); return i >= 0 ? i + 1 : 1; }}
+          nbEtapes={navItems.length}
+        />
+      ) : (
+      <main id="contenu-principal" className="flex-1 flex flex-col relative z-10 w-full max-w-[1400px] mx-auto px-5 sm:px-8">
           {error && (
             <div role="alert" className="bg-red-500/15 border border-red-500/30 text-red-200 p-4 rounded-xl mt-4 flex items-start gap-3">
                 <i className="fas fa-circle-exclamation mt-0.5" aria-hidden="true"></i>
@@ -1333,6 +1449,7 @@ const App: React.FC = () => {
                     titre={titre}
                     onTitreChange={setTitre}
                     format={format}
+                    cadrage={cadrage}
                     onRestart={handleRestart}
                 />
              </div>
@@ -1351,13 +1468,15 @@ const App: React.FC = () => {
              </div>
           )}
       </main>
+      )}
 
       <ChatAssistant contexte={contexteAssistant} />
       <CentreNotifications />
       {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
       {showSceneAnalysisConfig && <AnalysisConfigModal type="scene" longueurRecit={fullText.length} onConfirm={handleStartSceneExtraction} onCancel={() => setShowSceneAnalysisConfig(false)} />}
       {editingImage && <ImageEditorModal imageUrl={editingImage.url} onClose={() => setEditingImage(null)} onSave={handleSaveEditedImage} />}
-      <OnboardingTour step={step} />
+      {ecran === 'travail' && <OnboardingTour step={step} />}
+      </div>
     </div>
   );
 };

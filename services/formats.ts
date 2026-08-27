@@ -133,6 +133,65 @@ export const formatParId = (id: string): BookFormat =>
 export const libelleFormat = (format: BookFormat): string =>
   `${format.nom} (${format.dimensions})`;
 
+/**
+ * Le format du liseur.
+ *
+ * L'etape Livre ne feuillette qu'a une seule geometrie de page, et ce n'est pas
+ * une preference de gout. Deux conditions doivent tenir ensemble :
+ *
+ * 1. La double page, c'est a dire les deux feuillets ouverts cote a cote, doit
+ *    se lire sur un ecran. Au dela de deux fois plus large que haut, on obtient
+ *    un bandeau ou plus rien n'est lisible.
+ * 2. L'illustration doit remplir sa page sans etre rognee, donc la page doit
+ *    tomber exactement sur une proportion que Gemini sait produire.
+ *
+ * Mesure du 2026-08-26, avec `ratioPourCadrage` en pleine page :
+ *
+ *   format      page     ratio    ecart     double page
+ *   moyen_p     0,6667   2:3      0,00 %    1,333
+ *   digest_p    0,6481   2:3      2,86 %    1,296
+ *   a5_p        0,7143   3:4      5,00 %    1,429
+ *   a4_p        0,7071   2:3      5,71 %    1,414
+ *   poche_p     0,6111   9:16     7,95 %    1,222
+ *   les cinq formats a l'italienne : double page de 2,80 a 3,27, elimines.
+ *
+ * Un seul format ne rogne rien du tout : Moyen, 16 x 24 cm. Sa double page fait
+ * 4:3. C'est celui du liseur, et c'est aussi le format propose par defaut.
+ */
+export const FORMAT_LISEUR_ID = 'moyen_p';
+
+/** Le format du liseur, resolu une fois. */
+export const FORMAT_LISEUR: BookFormat = formatParId(FORMAT_LISEUR_ID);
+
+/** Proportion de la double page ouverte : deux feuillets pour une hauteur. */
+export const RATIO_DOUBLE_PAGE = (FORMAT_LISEUR.largeurMm * 2) / FORMAT_LISEUR.hauteurMm;
+
+/**
+ * Ce format est il celui que le liseur sait feuilleter.
+ *
+ * Les neuf autres restent disponibles, mais le liseur ne change pas de page
+ * pour eux : il les affiche dans sa propre page, avec les marges que l'ecart
+ * de proportion impose. L'interface le dit au lieu de le taire.
+ */
+export const estFormatDuLiseur = (format: BookFormat): boolean =>
+  format.id === FORMAT_LISEUR_ID;
+
+/**
+ * Quelle part de la page du liseur l'illustration remplira reellement.
+ *
+ * Le liseur montre l'image entiere, jamais rognee : quand sa proportion n'est
+ * pas celle de sa page, la difference devient du papier blanc. Ce nombre dit
+ * combien, entre 0 et 1, et vaut exactement 1 au format du liseur.
+ *
+ * C'est le chiffre que l'interface affiche a cote des neuf autres formats, au
+ * lieu de se contenter d'un « non recommande » que personne ne peut verifier.
+ */
+export const remplissageDuLiseur = (format: BookFormat, cadrage: Cadrage): number => {
+  const image = valeurDuRatio(ratioPourCadrage(format, cadrage));
+  const page = ratioDeLaPage(FORMAT_LISEUR);
+  return Math.min(image, page) / Math.max(image, page);
+};
+
 /** Ce que chaque cadrage veut dire, en une phrase, pour l'interface. */
 export const LIBELLE_CADRAGE: Record<Cadrage, { titre: string; explication: string }> = {
   'pleine-page': {

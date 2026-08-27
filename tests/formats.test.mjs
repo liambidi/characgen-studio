@@ -16,10 +16,15 @@ import { readFileSync } from "node:fs";
 import {
   BOOK_FORMATS,
   RATIOS_IMAGE,
+  FORMAT_LISEUR,
+  FORMAT_LISEUR_ID,
+  RATIO_DOUBLE_PAGE,
   valeurDuRatio,
   ratioDeLaPage,
   ratioPourCadrage,
   ecartDeCadrage,
+  estFormatDuLiseur,
+  remplissageDuLiseur,
   formatParId,
   libelleFormat,
 } from "../services/formats.ts";
@@ -162,4 +167,68 @@ test("la proportion de la page se calcule, elle n'est plus saisie", () => {
 
 test("le libelle complet garde le nom et les dimensions", () => {
   assert.equal(libelleFormat(formatParId("a4_p")), "A4 (21 x 29,7 cm)");
+});
+
+// ---------------------------------------------------------------------------
+// Le format du liseur
+// ---------------------------------------------------------------------------
+
+/*
+  Ces tests gardent un choix, pas une preference. Le liseur ouvre deux pages
+  cote a cote, et ce format a ete retenu parce qu'il est le seul a satisfaire
+  deux contraintes mesurables a la fois. Si un jour le catalogue change et que
+  ces deux contraintes ne tiennent plus ensemble, c'est ici que ca se verra, et
+  non a l'ecran ou l'on constaterait seulement que le livre est devenu laid.
+*/
+
+test("le format du liseur ne rogne rien du tout", () => {
+  assert.equal(FORMAT_LISEUR.id, FORMAT_LISEUR_ID);
+  assert.ok(estFormatDuLiseur(FORMAT_LISEUR));
+  assert.ok(ecartDeCadrage(FORMAT_LISEUR, "pleine-page") < 0.001, "sa page doit tomber sur une proportion existante");
+  assert.equal(remplissageDuLiseur(FORMAT_LISEUR, "pleine-page"), 1, "l'illustration doit remplir sa page entiere");
+});
+
+test("il est le seul format portrait a ne rien rogner", () => {
+  const parfaits = BOOK_FORMATS
+    .filter((f) => f.famille === "portrait")
+    .filter((f) => ecartDeCadrage(f, "pleine-page") < 0.5);
+  assert.deepEqual(parfaits.map((f) => f.id), [FORMAT_LISEUR_ID]);
+});
+
+test("sa double page se lit a l'ecran, celle des formats a l'italienne non", () => {
+  assert.ok(RATIO_DOUBLE_PAGE > 1.2 && RATIO_DOUBLE_PAGE < 1.6, `double page de ${RATIO_DOUBLE_PAGE}`);
+
+  for (const f of BOOK_FORMATS.filter((f) => f.famille === "paysage")) {
+    const ouvert = (f.largeurMm * 2) / f.hauteurMm;
+    assert.ok(ouvert > 2.5, `${f.id} ouvert vaut ${ouvert}, ce n'est pas une page, c'est un bandeau`);
+  }
+});
+
+test("le remplissage annonce reste un pourcentage credible pour tous les formats", () => {
+  for (const f of BOOK_FORMATS) {
+    for (const cadrage of ["pleine-page", "portrait", "carre", "paysage"]) {
+      const part = remplissageDuLiseur(f, cadrage);
+      assert.ok(part > 0 && part <= 1, `${f.id} en ${cadrage} annonce ${part}`);
+    }
+  }
+});
+
+test("un cadrage portrait impose remplit la page du liseur, quel que soit le format", () => {
+  // 2:3 est exactement la proportion de la page du liseur : forcer le portrait
+  // sauve donc l'affichage meme quand le format du livre est ailleurs.
+  for (const f of BOOK_FORMATS) {
+    assert.equal(remplissageDuLiseur(f, "portrait"), 1, `${f.id} en cadrage portrait`);
+  }
+});
+
+test("l'application propose le format du liseur par defaut", () => {
+  const source = lire("../App.tsx");
+  assert.ok(
+    /useState<string>\(FORMAT_LISEUR_ID\)/.test(source),
+    "le format initial doit venir de la constante, pas d'un identifiant recopie"
+  );
+  assert.ok(
+    !/useState<string>\('a4_l'\)/.test(source),
+    "l'A4 a l'italienne ouvert fait un bandeau de 2,83 pour 1, il ne peut plus etre le defaut"
+  );
 });

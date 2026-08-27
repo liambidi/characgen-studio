@@ -23,6 +23,23 @@
 @import '@fontsource-variable/inter/wght.css';
 @import '@fontsource-variable/outfit/wght.css';
 
+/*
+  La police du livre.
+
+  Inter et Outfit sont les voix de l'application ; ce ne sont pas des voix de
+  livre. Le liseur affiche des pages imprimees, et la pile de polices systeme
+  Georgia puis Times New Roman n'est pas un choix typographique, c'est ce qui
+  reste quand on n'en fait pas.
+
+  Literata est un caractere a empattements dessine pour la lecture longue a
+  l'ecran. C'est l'axe opsz, taille optique, qui est charge ici : le dessin
+  s'epaissit tout seul dans le texte courant et s'affine dans les grands
+  titres, ce qu'aucune graisse fixe ne sait faire. L'italique sert aux mentions
+  de la couverture et du colophon.
+*/
+@import '@fontsource-variable/literata/opsz.css';
+@import '@fontsource-variable/literata/opsz-italic.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -101,4 +118,737 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* =========================================================================
+   LE LISEUR
+   =========================================================================
+
+   L'etape Livre ne fait plus defiler des planches, elle en feuillette. Ce qui
+   suit dessine un objet physique : deux feuillets de papier relies par une
+   pliure, une tranche qui s'amincit a mesure qu'on avance, et une feuille qui
+   pivote reellement dans l'espace quand on tourne la page.
+
+   POURQUOI DU CSS ECRIT A LA MAIN PLUTOT QUE DES CLASSES UTILITAIRES
+
+   Trois raisons, toutes structurelles :
+
+   1. Les rotations en trois dimensions ont besoin de transform-style et de
+      backface-visibility coordonnes entre un parent et ses deux faces. Ecrit
+      en classes utilitaires, le rapport entre ces trois declarations devient
+      invisible.
+   2. Les tailles de texte des pages ne dependent pas de l'ecran mais de la
+      largeur de la page, mesuree puis publiee dans --pw. Un titre vaut 7,2 %
+      de sa page, comme dans un livre imprime, et non « 3xl a partir de tel
+      point de rupture ».
+   3. Les couches en mouvement se redessinent soixante fois par seconde. Les
+      regles sont donc ecrites une fois pour toutes ici, plutot que
+      re-injectees dans une balise style a chaque rendu.
+
+   REPERES DE LA MAQUETTE, en fraction de la largeur d'une page :
+     marge exterieure 0,150   marge interieure 0,105   marge haute 0,115
+     lieu 0,0255   titre 0,072   recit 0,030 a 0,0395   folio 0,024
+*/
+
+.liseur {
+  --papier: #faf7f1;
+  --papier-creux: #efe9dd;
+  --encre: #17130f;
+  --encre-douce: #4c443b;
+  --encre-discrete: #6f665b;
+  --accent: #b0281c;
+  --laiton: #c6a15c;
+  --ombre-reliure: rgba(38, 26, 16, 0.34);
+}
+
+/* --- La scene ---------------------------------------------------------- */
+
+.liseur-scene {
+  position: relative;
+  perspective: 3200px;
+  /*
+    Point de fuite au centre exact. A 44 % de la hauteur, la feuille qui pivote
+    debordait deux fois plus par le bas que par le haut et venait mordre sur la
+    barre de lecture. Le debordement subsiste, d'une cinquantaine de pixels de
+    chaque cote : c'est la perspective qui le produit, une page qui tourne
+    passe devant le livre. Le rogner donnerait une feuille coupee en plein vol.
+  */
+  perspective-origin: 50% 50%;
+}
+
+/* L'ombre portee au sol. Elle a un decalage et un flou : un halo centre ne
+   serait qu'une decoration, pas une source de lumiere. */
+.liseur-socle {
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  bottom: -3.2%;
+  height: 7%;
+  background: radial-gradient(50% 50% at 50% 40%, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0) 72%);
+  filter: blur(9px);
+  pointer-events: none;
+}
+
+/* --- Les feuillets ------------------------------------------------------ */
+
+.liseur-feuillet {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 50%;
+  overflow: hidden;
+  background: var(--papier);
+}
+
+.liseur-simple .liseur-feuillet,
+.liseur-simple .liseur-mobile {
+  width: 100%;
+}
+
+.liseur-gauche { left: 0; }
+.liseur-droite { right: 0; }
+
+/* Le grain du papier. Une turbulence fractale rendue par le navigateur, donc
+   aucun fichier a telecharger, et une opacite assez basse pour ne se voir que
+   sur les aplats. */
+.liseur-papier::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+/*
+  Le creux vers la reliure est dessine une seule fois, par .liseur-pliure, qui
+  couvre la gouttiere d'un bord a l'autre de la double page. Une ombre
+  interieure par feuillet a ete essayee d'abord : elle ne pouvait s'appliquer
+  qu'aux pages de texte, l'illustration a fond perdu la recouvrant, et cette
+  asymetrie entre les deux pages se voyait plus que l'effet cherche.
+*/
+
+/* --- La pliure ---------------------------------------------------------- */
+
+.liseur-pliure {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 9%;
+  transform: translateX(-50%);
+  z-index: 15;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(38, 26, 16, 0) 0%,
+    rgba(38, 26, 16, 0.13) 30%,
+    rgba(38, 26, 16, 0.34) 49%,
+    rgba(38, 26, 16, 0.34) 51%,
+    rgba(38, 26, 16, 0.13) 70%,
+    rgba(38, 26, 16, 0) 100%
+  );
+}
+
+/* --- Les tranches ------------------------------------------------------- */
+
+/* L'epaisseur des pages qui restent. Elle maigrit d'un cote et grossit de
+   l'autre au fil de la lecture : c'est la seule facon de sentir ou l'on en est
+   sans lire un compteur. */
+.liseur-tranche {
+  position: absolute;
+  top: 1.4%;
+  bottom: 1.4%;
+  z-index: 5;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(255, 253, 248, 0.95) 0px,
+    rgba(255, 253, 248, 0.95) 1px,
+    rgba(176, 164, 145, 0.55) 1px,
+    rgba(176, 164, 145, 0.55) 2px
+  );
+  /*
+    Pas de transition sur cette largeur, et c'est delibere. L'animer ferait
+    recalculer la mise en page a chaque image, pour un ecart d'un a deux pixels
+    par page tournee, donc invisible. La passer en scaleX aurait ete pire : le
+    degrade repete qui dessine les pages serait etire, et les traits de un
+    pixel qui font toute la credibilite de la tranche s'epaissiraient.
+  */
+}
+
+.liseur-tranche-gauche {
+  right: 100%;
+  border-radius: 3px 0 0 3px;
+  box-shadow: -3px 3px 9px rgba(0, 0, 0, 0.34);
+}
+
+.liseur-tranche-droite {
+  left: 100%;
+  border-radius: 0 3px 3px 0;
+  box-shadow: 3px 3px 9px rgba(0, 0, 0, 0.34);
+}
+
+/* --- La feuille qui tourne ---------------------------------------------- */
+
+/*
+  La feuille en mouvement passe au-dessus de tout : au-dessus des pages posees
+  (aucun z-index), au-dessus de la pliure (15), au-dessus des moities
+  cliquables (25) et au-dessus du texte lisible (26). Sans ce rang, le texte de
+  la page qu'on quitte resterait visible par-dessus la feuille qui la couvre.
+*/
+.liseur-mobile {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 50%;
+  z-index: 40;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.liseur-mobile-droite {
+  left: 50%;
+  transform-origin: left center;
+  animation: liseur-avant 0.78s cubic-bezier(0.36, 0.12, 0.2, 1) forwards;
+}
+
+.liseur-mobile-gauche {
+  left: 0;
+  transform-origin: right center;
+  animation: liseur-arriere 0.78s cubic-bezier(0.36, 0.12, 0.2, 1) forwards;
+}
+
+.liseur-simple .liseur-mobile-droite {
+  left: 0;
+  transform-origin: left center;
+  animation: liseur-simple-sortie 0.58s cubic-bezier(0.4, 0.05, 0.2, 1) forwards;
+}
+
+.liseur-simple .liseur-mobile-gauche {
+  left: 0;
+  transform-origin: left center;
+  animation: liseur-simple-entree 0.58s cubic-bezier(0.4, 0.05, 0.2, 1) forwards;
+}
+
+.liseur-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  background: var(--papier);
+}
+
+.liseur-verso { transform: rotateY(180deg); }
+
+/* La feuille s'assombrit quand elle passe par la tranche, puis se rouvre a la
+   lumiere. C'est ce degrade, et non la rotation seule, qui donne l'epaisseur. */
+.liseur-ombre-face {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(to left, rgba(30, 21, 13, 0.72), rgba(30, 21, 13, 0) 64%);
+  animation: liseur-ombre 0.78s ease-out forwards;
+}
+
+.liseur-verso .liseur-ombre-face,
+.liseur-mobile-gauche .liseur-recto .liseur-ombre-face {
+  background: linear-gradient(to right, rgba(30, 21, 13, 0.72), rgba(30, 21, 13, 0) 64%);
+}
+
+.liseur-mobile-gauche .liseur-verso .liseur-ombre-face {
+  background: linear-gradient(to left, rgba(30, 21, 13, 0.72), rgba(30, 21, 13, 0) 64%);
+}
+
+@keyframes liseur-avant {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(-180deg); }
+}
+
+@keyframes liseur-arriere {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(180deg); }
+}
+
+@keyframes liseur-simple-sortie {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(-116deg); }
+}
+
+@keyframes liseur-simple-entree {
+  from { transform: rotateY(-116deg); }
+  to { transform: rotateY(0deg); }
+}
+
+@keyframes liseur-ombre {
+  0% { opacity: 0; }
+  46% { opacity: 0.62; }
+  100% { opacity: 0.1; }
+}
+
+/* --- Typographie des pages ---------------------------------------------- */
+
+/*
+  Toutes les tailles descendent de --pw, la largeur reelle d'une page en
+  pixels, publiee par le composant. Une page de livre ne se compose pas en
+  points de rupture : le rapport entre le corps du texte et la largeur du
+  feuillet est fixe, c'est lui qui fait qu'une page ressemble a une page.
+*/
+
+.liseur-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--encre);
+  font-family: 'Literata Variable', Georgia, 'Times New Roman', serif;
+  font-optical-sizing: auto;
+}
+
+.liseur-page-texte {
+  padding-top: calc(var(--pw) * 0.115);
+  padding-bottom: calc(var(--pw) * 0.085);
+}
+
+.liseur-page-gauche { padding-left: calc(var(--pw) * 0.150); padding-right: calc(var(--pw) * 0.105); }
+.liseur-page-droite { padding-left: calc(var(--pw) * 0.105); padding-right: calc(var(--pw) * 0.150); }
+
+.liseur-lieu {
+  font-size: calc(var(--pw) * 0.0255);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--encre-discrete);
+  font-weight: 600;
+  margin-bottom: calc(var(--pw) * 0.045);
+}
+
+/*
+  font-family: inherit, et ce n'est pas une precaution.
+
+  index.css applique `font-heading`, donc Outfit, a tous les h1 a h6 dans la
+  couche de base. Une regle qui vise l'element l'emporte sur une famille
+  simplement heritee du parent : les titres du livre sortaient donc dans la
+  police de l'interface, un sans serif geometrique, au milieu d'une page
+  composee en Literata. Mesure faite dans le navigateur avant correction :
+  getComputedStyle(.liseur-titre).fontFamily renvoyait « Outfit Variable ».
+*/
+.liseur-titre {
+  font-family: inherit;
+  font-size: calc(var(--pw) * 0.072);
+  font-weight: 700;
+  line-height: 1.14;
+  letter-spacing: -0.017em;
+  text-wrap: balance;
+  margin-bottom: calc(var(--pw) * 0.038);
+}
+
+.liseur-filet {
+  width: calc(var(--pw) * 0.11);
+  height: 2px;
+  background: var(--accent);
+  margin-bottom: calc(var(--pw) * 0.052);
+  flex: none;
+}
+
+/*
+  Le texte du recit passe au-dessus des moities cliquables.
+
+  Ces moities couvrent la page entiere, ce qui est voulu : on tourne la page en
+  cliquant n'importe ou, comme sur du papier. Mais elles rendaient du meme coup
+  le recit impossible a selectionner et a faire defiler, alors que c'est la
+  seule zone du livre qu'on ait une raison de manipuler.
+*/
+.liseur-recit {
+  position: relative;
+  z-index: 26;
+  cursor: auto;
+  /*
+    --ajuste vient du composant, qui reduit le corps par pas de 4 % jusqu'a ce
+    que le passage tienne dans la page. Voir le commentaire de Recit dans
+    components/Liseur.tsx : c'est la que se decide pourquoi on compose plus
+    petit plutot que de tronquer ou de faire defiler.
+  */
+  font-size: calc(var(--pw) * var(--taille-recit, 0.036) * var(--ajuste, 1));
+  line-height: 1.78;
+  color: var(--encre-douce);
+  white-space: pre-wrap;
+  hyphens: auto;
+  /*
+    Justifie, comme un livre imprime, et non aligne a gauche comme une page web.
+    La cesure automatique est indispensable ici : sans elle, une colonne de
+    quarante signes justifiee ouvre des rivieres blanches entre les mots. Elle
+    fonctionne parce que index.html declare lang="fr", ce que le navigateur lit
+    pour choisir son dictionnaire de coupure.
+  */
+  text-align: justify;
+  text-justify: inter-word;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 105, 88, 0.45) transparent;
+}
+
+.liseur-recit::-webkit-scrollbar { width: 4px; }
+.liseur-recit::-webkit-scrollbar-track { background: transparent; }
+.liseur-recit::-webkit-scrollbar-thumb {
+  background: rgba(120, 105, 88, 0.45);
+  border-radius: 4px;
+}
+
+.liseur-page ::selection { background: rgba(176, 40, 28, 0.20); color: var(--encre); }
+
+.liseur-folio {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--pw) * 0.03);
+  margin-top: calc(var(--pw) * 0.05);
+  font-size: calc(var(--pw) * 0.024);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--encre-discrete);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.liseur-folio::before {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(125, 115, 104, 0.3);
+}
+
+/*
+  Le numero de planche va toujours au bord exterieur, comme dans un livre
+  imprime. Sur une page de gauche, l'exterieur est a gauche, donc l'ordre
+  s'inverse ; sur une page de droite, l'ordre naturel convient deja. La regle
+  visait la mauvaise page et rangeait le folio contre la reliure.
+*/
+.liseur-page-gauche .liseur-folio { flex-direction: row-reverse; }
+
+/* --- La page illustree -------------------------------------------------- */
+
+.liseur-illustration {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--papier-creux);
+}
+
+/*
+  contain et non cover.
+
+  Au format du liseur, la page et l'image ont exactement la meme proportion :
+  les deux reglages donnent alors le meme resultat, une image a fond perdu.
+  C'est aux neuf autres formats que le choix se voit, et cover y rognerait
+  l'illustration sans le dire. Le liseur prefere montrer une marge et laisser
+  l'avertissement expliquer pourquoi elle est la.
+*/
+.liseur-illustration img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* --- Couverture, gardes, colophon --------------------------------------- */
+
+.liseur-couverture {
+  background: radial-gradient(120% 80% at 50% 0%, #221b15 0%, #17130f 60%, #100c09 100%);
+  color: #f3ece0;
+}
+
+.liseur-cadre-laiton {
+  position: absolute;
+  inset: calc(var(--pw) * 0.055);
+  border: 1px solid rgba(198, 161, 92, 0.42);
+  pointer-events: none;
+}
+
+.liseur-garde {
+  background-color: #2a211a;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.028) 0px, rgba(255, 255, 255, 0.028) 1px, rgba(0, 0, 0, 0) 1px, rgba(0, 0, 0, 0) 7px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.10) 0px, rgba(0, 0, 0, 0.10) 1px, rgba(0, 0, 0, 0) 1px, rgba(0, 0, 0, 0) 7px);
+}
+
+.liseur-colophon { background: var(--papier); }
+
+/* --- Zones de tour de page ---------------------------------------------- */
+
+/* Les moities cliquables couvrent la page entiere. Elles n'ont aucun dessin :
+   c'est le curseur qui annonce ce qu'elles font. */
+.liseur-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  z-index: 25;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.liseur-zone-precedent { left: 0; cursor: w-resize; }
+.liseur-zone-suivant { right: 0; cursor: e-resize; }
+
+/* --- Mouvement reduit ---------------------------------------------------- */
+
+/*
+  La regle globale plus haut ramene deja toutes les durees a 0,01 ms, ce qui
+  suffirait presque. Elle est repetee ici parce qu'une animation de tour de
+  page qui s'execute quand meme, fut ce instantanement, laisse une trame
+  visible le temps d'une image ; mieux vaut qu'aucune feuille ne bouge.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .liseur-mobile,
+  .liseur-ombre-face,
+  .liseur-tranche {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* --- Le cadre qui contient le livre -------------------------------------- */
+
+/*
+  Le livre est dimensionne en pixels par le composant, apres mesure de ce cadre.
+  C'est volontaire : `aspect-ratio` seul ne sait pas se plier a la fois a une
+  largeur et a une hauteur maximales, il en choisit une et casse la proportion
+  sur l'autre. Or une double page dont la proportion derape n'est plus une
+  double page, c'est un rectangle.
+*/
+/*
+  La hauteur arrive du composant, en pixels, apres mesure de la place qui reste
+  reellement sous l'en-tete et au-dessus de la barre de lecture. La valeur fixe
+  qui etait ici, 68vh, ne savait pas qu'un avertissement de format pouvait
+  s'inserer au-dessus : le livre passait alors sous le bord de l'ecran. Le
+  clamp ci-dessous ne sert plus que de secours avant la premiere mesure.
+*/
+.liseur-cadre {
+  height: clamp(300px, 60vh, 840px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.liseur:fullscreen {
+  background: #14100c;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 2rem 1.75rem;
+}
+
+.liseur:fullscreen .liseur-cadre {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- Elements de page qui ne doivent jamais se comprimer ----------------- */
+
+.liseur-lieu,
+.liseur-titre {
+  flex: none;
+}
+
+/* --- La couverture ------------------------------------------------------- */
+
+.liseur-couverture-corps {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--pw) * 0.125);
+}
+
+.liseur-vignette {
+  flex: none;
+  height: calc(var(--pw) * 0.84);
+  overflow: hidden;
+  background: #0d0a07;
+  border: 1px solid rgba(198, 161, 92, 0.38);
+}
+
+.liseur-vignette img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: saturate(0.92) contrast(1.03);
+}
+
+.liseur-couverture-texte {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding-top: calc(var(--pw) * 0.06);
+}
+
+.liseur-couverture-titre {
+  font-family: inherit;
+  font-size: calc(var(--pw) * 0.094);
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  color: #f6efe3;
+  overflow-wrap: break-word;
+}
+
+.liseur-couverture-filet {
+  width: calc(var(--pw) * 0.16);
+  height: 2px;
+  background: var(--accent);
+  margin: calc(var(--pw) * 0.052) 0;
+  flex: none;
+}
+
+.liseur-couverture-mention {
+  font-style: italic;
+  font-size: calc(var(--pw) * 0.030);
+  color: rgba(214, 183, 126, 0.88);
+}
+
+/* --- Le colophon --------------------------------------------------------- */
+
+.liseur-colophon-corps {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: calc(var(--pw) * 0.036);
+  padding: calc(var(--pw) * 0.14);
+}
+
+.liseur-fin {
+  font-size: calc(var(--pw) * 0.029);
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--encre-discrete);
+}
+
+.liseur-colophon-titre {
+  font-family: inherit;
+  font-size: calc(var(--pw) * 0.060);
+  font-weight: 700;
+  line-height: 1.16;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  color: var(--encre);
+}
+
+.liseur-colophon-detail {
+  font-size: calc(var(--pw) * 0.027);
+  line-height: 1.75;
+  color: var(--encre-douce);
+}
+
+.liseur-fleuron {
+  width: calc(var(--pw) * 0.10);
+  height: auto;
+  color: var(--accent);
+}
+
+/* --- Le rail de position ------------------------------------------------- */
+
+/*
+  Une piste de lecture, pas un curseur de formulaire. Les navigateurs livrent
+  ici un dessin gris qui n'appartient a aucun systeme de design, et c'est le
+  genre de surface qu'on oublie de reprendre.
+*/
+.liseur-rail {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.liseur-rail::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.liseur-rail::-moz-range-track {
+  height: 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.liseur-rail::-moz-range-progress {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--laiton);
+}
+
+.liseur-rail::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #f3ece0;
+  border: 2px solid var(--laiton);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s ease-out;
+}
+
+.liseur-rail::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #f3ece0;
+  border: 2px solid var(--laiton);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.liseur-rail:hover::-webkit-slider-thumb { transform: scale(1.18); }
+.liseur-rail:focus-visible::-webkit-slider-thumb { transform: scale(1.18); }
+
+/* --- Le sommaire --------------------------------------------------------- */
+
+.liseur-vignette-sommaire {
+  flex: none;
+  width: 62px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #0d0a07;
+  transition: border-color 0.2s ease-out, transform 0.2s cubic-bezier(0.36, 0.12, 0.2, 1);
+}
+
+.liseur-vignette-sommaire img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  display: block;
+}
+
+.liseur-vignette-sommaire:hover {
+  border-color: rgba(198, 161, 92, 0.7);
+  transform: translateY(-3px);
+}
+
+.liseur-vignette-sommaire[aria-current='true'] {
+  border-color: var(--laiton);
+  box-shadow: 0 4px 14px -4px rgba(198, 161, 92, 0.55);
 }
