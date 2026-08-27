@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Scene } from '../types';
 import { detailImage } from '../services/dataService';
 import AvertissementPlanche from './AvertissementPlanche';
+import BarreVue, { useCollectionFiltree, useReglagesVue } from './BarreVue';
+import VueCompacte, { focaliserFiche, type LigneCompacte } from './VueCompacte';
+import { ancre } from '../services/vue';
 
 interface SceneGalleryProps {
   scenes: Scene[];
@@ -23,6 +26,79 @@ interface SceneGalleryProps {
 
 const SceneGallery: React.FC<SceneGalleryProps> = ({ scenes, onRestart, onRetry, onNextStep, onEditImage, onStop, isGenerating, ratioImage = '16:9' }) => {
   const [erreurOuverte, setErreurOuverte] = useState<string | null>(null);
+
+  /*
+   * C'EST ICI QUE LE MODE COMPACT COMPTE LE PLUS
+   *
+   * Le storyboard empile des cartes pleine largeur separees de trois rem. Sur un
+   * roman decoupe en cent scenes, le parcourir une fois demande une cinquantaine
+   * d'ecrans de defilement, et rien ne permettait de sauter a la scene 62 ni de
+   * voir si deux planches voisines se ressemblent. Le mur de vignettes fait
+   * tenir ces cent scenes en un ecran ou deux.
+   *
+   * Le numero de scene est conserve sur chaque ligne : il vient du rang dans le
+   * tableau complet, pas dans la liste filtree. Filtrer sur les erreurs et lire
+   * « 03 » sur la troisieme erreur, au lieu du vrai numero de la scene, ferait
+   * chercher longtemps.
+   */
+  const vue = useReglagesVue('storyboard');
+  const numeroDe = new Map(scenes.map((scene, index) => [scene.id, index + 1]));
+
+  const { visibles, comptes } = useCollectionFiltree(
+    scenes,
+    vue.recherche,
+    vue.etat,
+    (scene) => [scene.title, scene.location, scene.description, ...(scene.charactersPresent || [])],
+  );
+
+  const lignes: LigneCompacte[] = visibles.map((scene) => {
+    const presents = (scene.charactersPresent || []).filter(Boolean);
+    return {
+      id: scene.id,
+      rang: numeroDe.get(scene.id),
+      nom: scene.title,
+      sousTitre: scene.location,
+      vignette: scene.imageUrl,
+      statut: scene.status,
+      detail: scene.status === 'error'
+        ? scene.errorMessage
+        : presents.length > 0 ? `Avec ${presents.join(', ')}` : undefined,
+      etiquettes: [
+        ...(presents.length > 0
+          ? [{ texte: `${presents.length} pers.`, ton: 'lien' as const, titre: presents.join(', ') }]
+          : []),
+        ...(scene.reperageIncertain ? [{ texte: 'reperage incertain', ton: 'alerte' as const }] : []),
+      ],
+      actions: (
+        <>
+          {scene.status === 'error' && (
+            <button
+              onClick={() => onRetry(scene.id)}
+              aria-label={`Relancer l'illustration de ${scene.title}`}
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-amber-300 hover:text-white hover:bg-amber-500 transition"
+            >
+              <i className="fas fa-rotate-right text-xs" aria-hidden="true"></i>
+            </button>
+          )}
+          {scene.imageUrl && (
+            <button
+              onClick={() => downloadImage(scene)}
+              aria-label={`Telecharger l'illustration de ${scene.title}`}
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <i className="fas fa-download text-xs" aria-hidden="true"></i>
+            </button>
+          )}
+        </>
+      ),
+    };
+  });
+
+  /** La regle unique de l'application : un clic ramene a la carte, et la designe. */
+  const ouvrirScene = (id: string) => {
+    vue.setDensite('cartes');
+    focaliserFiche('scene', id);
+  };
 
   const downloadImage = (scene: Scene) => {
     if (!scene.imageUrl) return;
@@ -99,10 +175,40 @@ const SceneGallery: React.FC<SceneGalleryProps> = ({ scenes, onRestart, onRetry,
 
       <AvertissementPlanche className="mb-8" avecRelance />
 
+      {/* Recherche, filtre d'état et densité. Voir components/BarreVue.tsx. */}
+      <div className="mb-8">
+        <BarreVue
+          recherche={vue.recherche}
+          onRecherche={vue.setRecherche}
+          etat={vue.etat}
+          onEtat={vue.setEtat}
+          densite={vue.densite}
+          onDensite={vue.setDensite}
+          comptes={comptes}
+          visibles={visibles.length}
+          nom="scène"
+          exemple="Chercher un titre, un lieu, un personnage"
+          planchesPossibles={scenes.some((s) => Boolean(s.imageUrl))}
+        />
+      </div>
+
+      {vue.densite !== 'cartes' ? (
+        <VueCompacte
+          lignes={lignes}
+          densite={vue.densite}
+          onOuvrir={ouvrirScene}
+          ratioImage={ratioImage}
+          vide="Aucune scène ne correspond à cette recherche."
+        />
+      ) : (
+
       <div className="space-y-12">
-        {scenes.map((scene, index) => (
+        {visibles.map((scene) => {
+          const index = (numeroDe.get(scene.id) || 1) - 1;
+          return (
           <div
             key={scene.id}
+            id={ancre('scene', scene.id)}
             className={`bg-surface rounded-2xl overflow-hidden shadow-2xl border border-slate-700 transition-all duration-500
               ${scene.status === 'generating' ? 'ring-2 ring-emerald-500' : ''}`}
           >
@@ -220,8 +326,10 @@ const SceneGallery: React.FC<SceneGalleryProps> = ({ scenes, onRestart, onRetry,
                 </div>
              </div>
           </div>
-        ))}
+          );
+        })}
       </div>
+      )}
     </div>
   );
 };

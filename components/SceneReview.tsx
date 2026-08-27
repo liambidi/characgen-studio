@@ -6,6 +6,9 @@ import { notifier } from '../services/notifications';
 // les deux fonctions utilisées ici partent dans le paquet du navigateur.
 import { memePersonnage } from '../netlify/shared/analyse';
 import AvertissementPlanche from './AvertissementPlanche';
+import BarreVue, { useCollectionFiltree, useReglagesVue } from './BarreVue';
+import VueCompacte, { focaliserFiche, type LigneCompacte } from './VueCompacte';
+import { ancre } from '../services/vue';
 
 interface SceneReviewProps {
   scenes: Scene[];
@@ -152,6 +155,46 @@ const SceneReview: React.FC<SceneReviewProps> = ({
   });
 
   const [aiPrompt, setAiPrompt] = useState('');
+
+  /*
+   * Le séquencier peut facilement dépasser cent scènes. Les cartes restent
+   * l'espace de correction, mais la liste et le mur permettent d'abord de
+   * repérer une scène, puis de revenir exactement sur sa fiche.
+   */
+  const vue = useReglagesVue('sequencier');
+  const numeroDe = new Map(scenes.map((scene, index) => [scene.id, index + 1]));
+  const { visibles, comptes } = useCollectionFiltree(
+    scenes,
+    vue.recherche,
+    vue.etat,
+    (scene) => [scene.title, scene.location, scene.description, ...(scene.charactersPresent || [])],
+  );
+
+  const lignes: LigneCompacte[] = visibles.map((scene) => {
+    const personnages = (scene.charactersPresent || []).filter(Boolean);
+    return {
+      id: scene.id,
+      rang: numeroDe.get(scene.id),
+      nom: scene.title,
+      sousTitre: scene.location,
+      vignette: scene.imageUrl,
+      statut: scene.status,
+      detail: scene.status === 'error'
+        ? scene.errorMessage
+        : personnages.length > 0 ? `Avec ${personnages.join(', ')}` : undefined,
+      etiquettes: [
+        ...(personnages.length > 0
+          ? [{ texte: `${personnages.length} pers.`, ton: 'lien' as const, titre: personnages.join(', ') }]
+          : []),
+        ...(scene.reperageIncertain ? [{ texte: 'reperage incertain', ton: 'alerte' as const }] : []),
+      ],
+    };
+  });
+
+  const ouvrirScene = (id: string) => {
+    vue.setDensite('cartes');
+    focaliserFiche('sequence', id);
+  };
 
   const openAddModal = (index?: number) => {
       setModalMode('add');
@@ -314,8 +357,34 @@ const SceneReview: React.FC<SceneReviewProps> = ({
         </div>
       )}
 
+      {/* Recherche, filtre d'état et densité. Voir components/BarreVue.tsx. */}
+      <BarreVue
+        recherche={vue.recherche}
+        onRecherche={vue.setRecherche}
+        etat={vue.etat}
+        onEtat={vue.setEtat}
+        densite={vue.densite}
+        onDensite={vue.setDensite}
+        comptes={comptes}
+        visibles={visibles.length}
+        nom="scène"
+        exemple="Chercher un titre, un lieu, un personnage"
+        planchesPossibles={scenes.some((s) => Boolean(s.imageUrl))}
+        sansEtat={comptes.faits === 0 && comptes.erreurs === 0}
+      />
+
+      {vue.densite !== 'cartes' ? (
+        <VueCompacte
+          lignes={lignes}
+          densite={vue.densite}
+          onOuvrir={ouvrirScene}
+          vide="Aucune scène ne correspond à cette recherche."
+        />
+      ) : (
+
       <div className="space-y-4">
-        {scenes.map((scene, index) => {
+        {visibles.map((scene) => {
+            const index = (numeroDe.get(scene.id) || 1) - 1;
             // BUG FIX: Handle case where charactersPresent is undefined
             const safeCharsPresent = scene.charactersPresent || [];
             
@@ -332,7 +401,7 @@ const SceneReview: React.FC<SceneReviewProps> = ({
             const isEditingChars = inlineCharEditId === scene.id;
 
             return (
-                <div key={scene.id} className="relative group/item">
+                <div key={scene.id} id={ancre('sequence', scene.id)} className="relative group/item">
                     {/* Insert Button (Hover) */}
                     <div className="h-6 -my-3 flex items-center justify-center opacity-0 group-hover/item:opacity-100 transition-opacity z-10 relative">
                         <button 
@@ -550,6 +619,7 @@ const SceneReview: React.FC<SceneReviewProps> = ({
             )
         })}
       </div>
+      )}
 
       {/* Réglages du format, puis lancement du storyboard */}
       <div className="mt-12 flex flex-col gap-6">

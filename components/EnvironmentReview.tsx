@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
-import { Environment, Importance, LIBELLE_TYPE_DECOR } from '../types';
+import React, { useMemo, useState } from 'react';
+import { Environment, Importance, LIBELLE_IMPORTANCE, LIBELLE_TYPE_DECOR, Scene } from '../types';
 import FiltreImportance, { PastilleImportance, filtrerParImportance } from './FiltreImportance';
 import { notifier } from '../services/notifications';
+import BarreVue, { useCollectionFiltree, useReglagesVue } from './BarreVue';
+import VueCompacte, { focaliserFiche, type LigneCompacte } from './VueCompacte';
+import { ancre, detailScenes, resumeScenes, scenesParDecor } from '../services/vue';
 
 interface EnvironmentReviewProps {
   environments: Environment[];
+  /**
+   * Le sequencier, quand il existe deja, pour repondre a « combien de scenes se
+   * deroulent dans ce decor ». Voir la meme prop dans CharacterReview.
+   */
+  scenes?: Scene[];
   onRemoveEnvironment: (id: string) => void;
   onUpdateEnvironment: (id: string, data: Partial<Environment>) => void;
   onAddEnvironment: (method: 'manual'|'ai', data: any) => Promise<string | void>;
@@ -14,6 +22,7 @@ interface EnvironmentReviewProps {
 
 const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
   environments,
+  scenes = [],
   onRemoveEnvironment,
   onUpdateEnvironment,
   onAddEnvironment,
@@ -22,7 +31,60 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
 }) => {
   /** Sélection vide : tous les décors sont visibles. */
   const [importances, setImportances] = useState<Importance[]>([]);
-  const visibles = filtrerParImportance(environments, importances);
+  const parImportance = filtrerParImportance(environments, importances);
+
+  /* Le mode compact se compose avec le filtre par importance, il ne le remplace pas. */
+  const vue = useReglagesVue('decors');
+  const { visibles, comptes } = useCollectionFiltree(
+    parImportance,
+    vue.recherche,
+    vue.etat,
+    (e) => [e.name, LIBELLE_TYPE_DECOR[e.type], e.description, e.mood],
+  );
+
+  /** Le lien vers le séquencier, calculé une fois pour tous les décors. */
+  const scenesDe = useMemo(() => scenesParDecor(scenes, environments), [scenes, environments]);
+
+  const lignes: LigneCompacte[] = visibles.map((env) => {
+    const numeros = scenesDe[env.id] || [];
+    const resume = resumeScenes(numeros);
+    return {
+      id: env.id,
+      nom: env.name,
+      sousTitre: `${LIBELLE_TYPE_DECOR[env.type]}${env.mood ? `, ${env.mood}` : ''}`,
+      vignette: env.imageUrl,
+      statut: env.status,
+      detail: resume ? detailScenes(numeros) : undefined,
+      etiquettes: [
+        ...(env.importance ? [{ texte: LIBELLE_IMPORTANCE[env.importance] }] : []),
+        ...(resume ? [{ texte: resume, ton: 'lien' as const, titre: detailScenes(numeros) }] : []),
+      ],
+      actions: (
+        <>
+          <button
+            onClick={() => openEdit(env)}
+            aria-label={`Modifier le décor ${env.name}`}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition"
+          >
+            <i className="fas fa-pen text-xs" aria-hidden="true"></i>
+          </button>
+          <button
+            onClick={() => onRemoveEnvironment(env.id)}
+            aria-label={`Supprimer le décor ${env.name}`}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-red-500 transition"
+          >
+            <i className="fas fa-times text-xs" aria-hidden="true"></i>
+          </button>
+        </>
+      ),
+    };
+  });
+
+  /** Un clic sur une ligne ramène aux cartes, puis désigne celle qu'on cherchait. */
+  const ouvrirFiche = (id: string) => {
+    vue.setDensite('cartes');
+    focaliserFiche('decor', id);
+  };
 
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
@@ -119,9 +181,35 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
             </button>
        </div>
 
+       {/* Recherche, filtre d'état et densité. Voir components/BarreVue.tsx. */}
+       <BarreVue
+         recherche={vue.recherche}
+         onRecherche={vue.setRecherche}
+         etat={vue.etat}
+         onEtat={vue.setEtat}
+         densite={vue.densite}
+         onDensite={vue.setDensite}
+         comptes={comptes}
+         visibles={visibles.length}
+         nom="décor"
+         exemple="Chercher un lieu, une ambiance"
+         planchesPossibles={environments.some((e) => Boolean(e.imageUrl))}
+         sansEtat={comptes.faits === 0 && comptes.erreurs === 0}
+       />
+
+       {vue.densite !== 'cartes' ? (
+         <VueCompacte
+           lignes={lignes}
+           densite={vue.densite}
+           onOuvrir={ouvrirFiche}
+           ratioImage="16 / 9"
+           vide="Aucun décor ne correspond à cette recherche."
+         />
+       ) : (
+
        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
            {visibles.map(env => (
-               <div key={env.id} className="bg-surface/50 border border-white/5 rounded-2xl p-6 hover:border-green-500/30 transition group relative">
+               <div key={env.id} id={ancre('decor', env.id)} className="bg-surface/50 border border-white/5 rounded-2xl p-6 hover:border-green-500/30 transition group relative">
                    {/* Boutons nommés pour un lecteur d'écran, et visibles sans survol
                        sur écran tactile, où le survol n'existe pas. */}
                    <div className="absolute top-4 right-4 flex gap-2 opacity-0 max-sm:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 transition">
@@ -156,6 +244,7 @@ const EnvironmentReview: React.FC<EnvironmentReviewProps> = ({
                </div>
            ))}
        </div>
+       )}
 
        <div className="flex justify-center pt-8">
             <button onClick={onNext} className="px-8 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-full shadow-lg transition">

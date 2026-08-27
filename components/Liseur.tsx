@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Scene } from '../types';
 import { RATIO_DOUBLE_PAGE } from '../services/formats';
 import { Feuillet, construireFeuillets, disposerFeuillets, positionDeLaPlanche } from '../services/liseur';
+import { lirePreference, ecrirePreference } from '../services/dataService';
 
 /**
  * Le liseur : l'etape Livre en objet feuilletable.
@@ -56,6 +57,16 @@ const SEUIL_DOUBLE_PAGE = 900;
 
 /** Duree des deux animations de tour de page, en millisecondes. Doit suivre le CSS. */
 const DUREE_TOUR = { double: 780, simple: 580 };
+
+/**
+ * Retient que les reperes de feuilletage ont ete lus.
+ *
+ * Ils ne se montrent qu'une fois, a la premiere ouverture d'un livre. Le
+ * bouton en point d'interrogation, dans la barre de lecture, les rappelle
+ * ensuite a la demande : sans lui, un lecteur qui decouvre le liseur sur la
+ * machine de quelqu'un d'autre n'aurait aucun moyen de les retrouver.
+ */
+const CLE_REPERES = 'characgen_liseur_reperes';
 
 const lireDouble = (): boolean =>
   typeof window === 'undefined' ? true : window.matchMedia(`(min-width: ${SEUIL_DOUBLE_PAGE}px)`).matches;
@@ -150,6 +161,67 @@ const Fleuron: React.FC = () => (
   </svg>
 );
 
+/**
+ * Les gestes du feuilletage, montres une seule fois.
+ *
+ * POURQUOI UNE SURCOUCHE ET PAS DU TEXTE SUR LE PAPIER
+ *
+ * Un livre n'explique pas comment on le tient. Ecrire « cliquez ici » sur une
+ * page annulerait l'objet que le liseur passe tant d'efforts a fabriquer. Le
+ * partage est donc net : ce qui dit OU L'ON EST, folio, page de garde,
+ * colophon, est de la typographie et vit sur le papier ; ce qui dit QUOI FAIRE
+ * appartient a l'ecran, se pose au-dessus, et s'en va.
+ *
+ * CE CALQUE NE BLOQUE RIEN
+ *
+ * `pointer-events` vaut `none` sur le calque et `auto` sur la seule carte :
+ * quelqu'un qui a compris avant d'avoir lu peut tourner la page tout de suite,
+ * et ce premier tour referme les reperes. C'est l'inverse d'une visite guidee,
+ * qui exige d'etre terminee avant de laisser toucher a quoi que ce soit.
+ */
+const Reperes: React.FC<{ double: boolean; onFermer: () => void }> = ({ double, onFermer }) => (
+  <div className="liseur-reperes" role="note" aria-label="Comment feuilleter ce livre">
+    <span className="liseur-repere liseur-repere-gauche" aria-hidden="true">
+      <i className="fas fa-arrow-left"></i>
+      Reculer
+    </span>
+    <span className="liseur-repere liseur-repere-droite" aria-hidden="true">
+      Avancer
+      <i className="fas fa-arrow-right"></i>
+    </span>
+
+    <div className="liseur-reperes-carte">
+      <p className="liseur-reperes-titre">Ceci est un livre, il se feuillette</p>
+      <ul className="liseur-reperes-liste">
+        <li>
+          <i className="fas fa-hand-pointer" aria-hidden="true"></i>
+          <span>
+            {double ? 'Cliquez une moitié du livre' : 'Cliquez la page'}, glissez au doigt, ou
+            utilisez les flèches du clavier. Début et Fin sautent aux extrémités.
+          </span>
+        </li>
+        <li>
+          <i className="fas fa-list" aria-hidden="true"></i>
+          <span>
+            <strong>Sommaire</strong>, sous le livre, montre toutes les planches et saute
+            directement à l'une d'elles.
+          </span>
+        </li>
+        <li>
+          <i className="fas fa-right-left" aria-hidden="true"></i>
+          <span>
+            <strong>Inverser</strong> fait passer l'illustration de l'autre côté de la double
+            page, quand le texte vous semble mieux à droite.
+          </span>
+        </li>
+      </ul>
+      <button type="button" className="liseur-reperes-bouton" onClick={onFermer}>
+        J'ai compris, ouvrir le livre
+      </button>
+    </div>
+  </div>
+);
+
 const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInverser }) => {
   const titreAffiche = titre.trim() || 'Sans titre';
 
@@ -166,6 +238,14 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
   const [position, setPosition] = useState(0);
   const [tour, setTour] = useState<1 | -1 | null>(null);
   const [sommaireOuvert, setSommaireOuvert] = useState(false);
+  /*
+    Les reperes de geste ne s'ouvrent qu'a la premiere visite, et le premier
+    tour de page suffit a les fermer : quelqu'un qui a deja compris n'a pas a
+    cliquer sur un bouton pour le prouver.
+  */
+  const [reperesOuverts, setReperesOuverts] = useState<boolean>(
+    () => scenes.length > 0 && lirePreference(CLE_REPERES) !== 'vus'
+  );
   const tourEnCours = useRef(false);
   /*
     Le sens du tour est double : une fois dans l'etat, pour declencher le rendu
@@ -176,6 +256,17 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
     d'une, une fois sur deux, et seulement en developpement.
   */
   const sensDuTour = useRef<1 | -1 | null>(null);
+
+  /*
+    L'ecriture de la preference est faite hors de la fonction de mise a jour,
+    volontairement. React appelle ces fonctions deux fois en mode strict, et y
+    loger un effet de bord est exactement l'erreur documentee plus haut a
+    propos du sens du tour.
+  */
+  const fermerReperes = useCallback(() => {
+    ecrirePreference(CLE_REPERES, 'vus');
+    setReperesOuverts(false);
+  }, []);
 
   const pas = double ? 2 : 1;
   const positionMax = double ? Math.max(0, feuillets.length - 2) : feuillets.length - 1;
@@ -213,6 +304,7 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
   const tourner = useCallback(
     (sens: 1 | -1) => {
       if (tourEnCours.current) return;
+      if (reperesOuverts) fermerReperes();
       const cible = position + sens * pas;
       if (cible < 0 || cible > positionMax) return;
       if (mouvementReduit()) {
@@ -223,16 +315,17 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
       sensDuTour.current = sens;
       setTour(sens);
     },
-    [position, pas, positionMax]
+    [position, pas, positionMax, reperesOuverts, fermerReperes]
   );
 
   const allerA = useCallback(
     (cible: number) => {
       if (tourEnCours.current) return;
+      if (reperesOuverts) fermerReperes();
       const alignee = double ? cible - (cible % 2) : cible;
       setPosition(Math.min(Math.max(alignee, 0), positionMax));
     },
-    [double, positionMax]
+    [double, positionMax, reperesOuverts, fermerReperes]
   );
 
   /*
@@ -431,8 +524,52 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
     if (!feuillet) return null;
     const cote = rang !== null && rang % 2 === 0 ? 'gauche' : 'droite';
 
+    /*
+      LES GARDES NE SONT PLUS MUETTES
+
+      Dans un livre imprime, une garde est une page blanche : on la tourne sans
+      la lire, et c'est tres bien ainsi. A l'ecran, c'est la premiere chose
+      qu'un nouveau venu voit, puisque le livre s'ouvre garde a gauche et
+      couverture a droite. Une page vide en guise d'accueil ne disait ni ou
+      l'on etait, ni ce que le livre contenait, ni comment on avance : elle
+      etait meme `aria-hidden`, donc invisible aussi aux lecteurs d'ecran.
+
+      La garde avant devient donc un faux-titre : le contenu du livre, et le
+      geste qui l'ouvre. C'est le seul endroit du papier ou le liseur parle
+      d'un geste, et il y a une raison : cette page precede le livre, elle n'en
+      fait pas partie. Une fois la couverture passee, plus aucune page ne donne
+      d'instruction.
+    */
     if (feuillet.nature === 'garde') {
-      return <div className="liseur-page liseur-garde" aria-hidden="true" />;
+      if (feuillet.cote === 'arriere') {
+        return (
+          <div className="liseur-page liseur-garde">
+            <div className="liseur-garde-corps">
+              <Fleuron />
+              <p className="liseur-garde-mention">Fin du livre</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="liseur-page liseur-garde">
+          <div className="liseur-garde-corps">
+            <p className="liseur-garde-sur-titre">CharacGen Studio</p>
+            <h3 className="liseur-garde-titre">{titreAffiche}</h3>
+            <span className="liseur-garde-filet" aria-hidden="true" />
+            <p className="liseur-garde-detail">
+              {scenes.length} planche{scenes.length > 1 ? 's' : ''}. Chacune occupe une double
+              page : le passage de votre récit d'un côté, son illustration en regard.
+            </p>
+            <p className="liseur-garde-geste">
+              {double
+                ? 'Cliquez la page de droite pour ouvrir.'
+                : 'Cliquez la page, ou glissez, pour ouvrir.'}
+            </p>
+          </div>
+        </div>
+      );
     }
 
     if (feuillet.nature === 'couverture') {
@@ -450,6 +587,10 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
               <h3 className="liseur-couverture-titre">{titreAffiche}</h3>
               <span className="liseur-couverture-filet" aria-hidden="true" />
               <p className="liseur-couverture-mention">Une création graphique assistée par IA</p>
+              <p className="liseur-couverture-compte">
+                {scenes.length} planche{scenes.length > 1 ? 's' : ''} illustrée
+                {scenes.length > 1 ? 's' : ''}
+              </p>
             </div>
           </div>
         </div>
@@ -471,11 +612,34 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
               <br />
               {new Date().toLocaleDateString('fr-FR')}
             </p>
+            <span className="liseur-colophon-filet" aria-hidden="true" />
+            {/*
+              Le colophon disait « Fin » et s'arretait la. Un lecteur arrive au
+              bout du livre n'avait alors plus rien a faire, alors que c'est
+              precisement le moment ou la sortie l'attend, sous le livre, hors
+              de son champ de vision.
+            */}
+            <p className="liseur-colophon-suite">
+              Sous le livre, <strong>Télécharger en PDF</strong> fabrique le fichier au format de
+              reliure choisi. <strong>Sommaire</strong> ramène à n'importe quelle planche.
+            </p>
           </div>
         </div>
       );
     }
 
+    /*
+      LE FOLIO SUR L'ILLUSTRATION
+
+      La page illustree ne portait aucun repere : ni numero, ni total. Sur un
+      ecran ou l'image occupe le feuillet entier, un lecteur qui arrive au
+      milieu du livre ne savait donc pas combien de planches il avait devant
+      lui. En page simple, sur telephone, l'illustration est seule a l'ecran :
+      il n'y avait plus rien du tout a lire.
+
+      Le numero se pose donc sur l'image, au bord exterieur, comme le fait un
+      album a fond perdu.
+    */
     if (feuillet.nature === 'image') {
       return (
         <div className="liseur-page">
@@ -486,6 +650,9 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
               decoding="async"
             />
           </div>
+          <p className={`liseur-folio-image liseur-folio-image-${cote}`}>
+            Planche {feuillet.numero} sur {scenes.length}
+          </p>
         </div>
       );
     }
@@ -498,8 +665,15 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
         <h3 className="liseur-titre">{feuillet.scene.title}</h3>
         <span className="liseur-filet" aria-hidden="true" />
         <Recit texte={recit} base={tailleDuRecit(recit.length)} largeurPage={largeurPage} />
+        {/*
+          Le folio portait le numero seul. « Planche 3 » ne dit pas si le livre
+          en compte quatre ou quarante, et c'est exactement ce qu'un lecteur
+          cherche a savoir quand il decide de continuer ou de s'arreter.
+        */}
         <p className="liseur-folio">
-          <span>Planche {feuillet.numero}</span>
+          <span>
+            Planche {feuillet.numero} sur {scenes.length}
+          </span>
         </p>
       </div>
     );
@@ -593,6 +767,8 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
             tabIndex={-1}
             aria-hidden="true"
           />
+
+          {reperesOuverts && <Reperes double={double} onFermer={fermerReperes} />}
         </div>
       </div>
 
@@ -639,7 +815,8 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
           <p className="text-sm text-slate-300 font-medium min-w-0" aria-live="polite">
             <span className="tabular-nums">{reperage}</span>
             <span className="text-slate-500 text-[12px] font-normal">
-              {'  '}· cliquez une moitié du livre, glissez, ou utilisez les flèches
+              {'  '}· {double ? 'cliquez une moitié du livre' : 'cliquez la page'}, glissez, ou
+              utilisez les flèches
             </span>
           </p>
 
@@ -669,6 +846,16 @@ const Liseur: React.FC<LiseurProps> = ({ scenes, titre, imageEnPremier, onInvers
                 Inverser
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => setReperesOuverts(true)}
+              className="w-[38px] h-[38px] flex items-center justify-center rounded-lg border border-white/10 text-slate-400 hover:text-white hover:border-white/25 transition"
+              aria-label="Revoir comment feuilleter le livre"
+              title="Comment feuilleter ce livre"
+            >
+              <i className="fas fa-circle-question" aria-hidden="true"></i>
+            </button>
 
             <button
               type="button"

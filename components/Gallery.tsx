@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Character, Environment, LIBELLE_TYPE_DECOR } from '../types';
 import { exportAssetsToZip, detailImage } from '../services/dataService';
 import { notifier, notifierErreur } from '../services/notifications';
+import BarreVue, { useCollectionFiltree, useReglagesVue } from './BarreVue';
+import VueCompacte, { focaliserFiche, type LigneCompacte } from './VueCompacte';
+import { ancre } from '../services/vue';
 
 interface GalleryProps {
   characters: Character[];
@@ -52,7 +55,82 @@ const Gallery: React.FC<GalleryProps> = ({
   const allCompleted = charsCompleted && envsCompleted && !isGenerating;
   const anyImages = characters.some(c => c.imageUrl) || environments.some(e => e.imageUrl);
 
-  const currentItems: (Character | Environment)[] = activeTab === 'chars' ? characters : environments;
+  const tousLesItems: (Character | Environment)[] = activeTab === 'chars' ? characters : environments;
+
+  /*
+   * La galerie est l'ecran ou les images arrivent une par une : la recherche y
+   * sert moins que le filtre d'etat, qui repond a « qu'est-ce qui a rate » sans
+   * avoir a chercher un carre ambre au milieu de quarante vignettes.
+   */
+  const vue = useReglagesVue('galerie');
+  const { visibles: currentItems, comptes } = useCollectionFiltree(
+    tousLesItems,
+    vue.recherche,
+    vue.etat,
+    (item: any) => [
+      item.name,
+      item.role,
+      item.type ? LIBELLE_TYPE_DECOR[item.type as Environment['type']] : undefined,
+      item.shortDescription,
+      item.description,
+    ],
+  );
+
+  const lignes: LigneCompacte[] = currentItems.map((item: any) => ({
+    id: item.id,
+    nom: item.name,
+    sousTitre: activeTab === 'chars'
+      ? item.role
+      : (LIBELLE_TYPE_DECOR[item.type as Environment['type']] || item.type),
+    vignette: item.imageUrl,
+    statut: item.status,
+    detail: item.status === 'error' ? item.errorMessage : undefined,
+    etiquettes: item.status === 'error' ? [{ texte: 'a relancer', ton: 'alerte' as const }] : [],
+    actions: (
+      <>
+        {item.status === 'error' && (
+          <button
+            onClick={() => onRetry(item.id, activeTab === 'chars' ? 'char' : 'env')}
+            aria-label={`Relancer la generation de ${item.name}`}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-amber-300 hover:text-white hover:bg-amber-500 transition"
+          >
+            <i className="fas fa-rotate-right text-xs" aria-hidden="true"></i>
+          </button>
+        )}
+        {item.imageUrl && (
+          <>
+            {/*
+              L'agrandissement est un bouton, pas le clic sur la ligne.
+              La regle du clic est la meme partout dans l'application, il ramene
+              a la carte complete : deux gestes identiques qui feraient deux
+              choses selon l'etape rendraient l'interface imprevisible. Le besoin
+              de regarder une image de pres reste, il a juste son propre bouton.
+            */}
+            <button
+              onClick={() => setSelectedImage({ url: item.imageUrl, nom: item.name })}
+              aria-label={`Agrandir l'image de ${item.name}`}
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <i className="fas fa-magnifying-glass-plus text-xs" aria-hidden="true"></i>
+            </button>
+            <button
+              onClick={() => downloadImage(item.imageUrl, item.name)}
+              aria-label={`Telecharger l'image de ${item.name}`}
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <i className="fas fa-download text-xs" aria-hidden="true"></i>
+            </button>
+          </>
+        )}
+      </>
+    ),
+  }));
+
+  /** La regle unique de l'application : un clic ramene a la carte, et la designe. */
+  const ouvrirElement = (id: string) => {
+    vue.setDensite('cartes');
+    focaliserFiche('asset', id);
+  };
 
   // Progression réelle, pour ne pas laisser l'utilisateur devant une attente aveugle.
   const total = characters.length + environments.length;
@@ -150,15 +228,41 @@ const Gallery: React.FC<GalleryProps> = ({
           </button>
       </div>
 
-      {currentItems.length === 0 ? (
+      {/* Recherche, filtre d'état et densité. Voir components/BarreVue.tsx. */}
+      <BarreVue
+        recherche={vue.recherche}
+        onRecherche={vue.setRecherche}
+        etat={vue.etat}
+        onEtat={vue.setEtat}
+        densite={vue.densite}
+        onDensite={vue.setDensite}
+        comptes={comptes}
+        visibles={currentItems.length}
+        nom={activeTab === 'chars' ? 'personnage' : 'décor'}
+        exemple={activeTab === 'chars' ? 'Chercher un nom, un rôle' : 'Chercher un lieu, une ambiance'}
+        planchesPossibles={tousLesItems.some((e) => Boolean(e.imageUrl))}
+      />
+
+      {tousLesItems.length === 0 ? (
         <p className="text-slate-400 text-center py-16">
           {activeTab === 'chars' ? "Aucun personnage dans ce projet." : "Aucun décor dans ce projet."}
         </p>
+      ) : vue.densite !== 'cartes' ? (
+        <VueCompacte
+          lignes={lignes}
+          densite={vue.densite}
+          onOuvrir={ouvrirElement}
+          ratioImage={activeTab === 'envs' ? '16 / 9' : '3 / 2'}
+          vide="Rien ne correspond à cette recherche."
+        />
+      ) : currentItems.length === 0 ? (
+        <p className="text-slate-400 text-center py-16">Rien ne correspond à cette recherche.</p>
       ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {currentItems.map((item: any) => (
           <div
             key={item.id}
+            id={ancre('asset', item.id)}
             className={`group bg-surface-highlight/30 border border-white/5 rounded-2xl overflow-hidden shadow-lg transition-all duration-500 hover:shadow-2xl hover:border-white/10
               ${item.status === 'generating' ? 'ring-1 ring-primary/50' : ''}`}
           >

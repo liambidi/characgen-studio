@@ -765,6 +765,272 @@
   color: var(--accent);
 }
 
+/* --- Les pages de garde -------------------------------------------------- */
+
+/*
+  Une garde imprimee est muette, et c'est normal : on ne la lit pas, on la
+  tourne. A l'ecran c'est la premiere page qu'on voit, puisque le livre s'ouvre
+  garde a gauche et couverture a droite. Elle porte donc un faux-titre, compose
+  en laiton sur la trame, assez discret pour ne pas concurrencer la couverture
+  qui lui fait face : c'est elle l'objet, la garde n'est que le seuil.
+*/
+.liseur-garde-corps {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: calc(var(--pw) * 0.026);
+  padding: calc(var(--pw) * 0.15);
+  color: rgba(226, 208, 176, 0.92);
+}
+
+.liseur-garde-sur-titre {
+  font-size: calc(var(--pw) * 0.0225);
+  letter-spacing: 0.30em;
+  text-transform: uppercase;
+  color: rgba(198, 161, 92, 0.68);
+}
+
+.liseur-garde-titre {
+  font-family: inherit;
+  font-size: calc(var(--pw) * 0.052);
+  font-weight: 700;
+  line-height: 1.16;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  color: #efe4cf;
+  overflow-wrap: break-word;
+}
+
+.liseur-garde-filet {
+  width: calc(var(--pw) * 0.11);
+  height: 1px;
+  background: rgba(198, 161, 92, 0.5);
+  margin: calc(var(--pw) * 0.014) 0;
+  flex: none;
+}
+
+.liseur-garde-detail {
+  font-size: calc(var(--pw) * 0.0265);
+  line-height: 1.72;
+  color: rgba(214, 199, 172, 0.76);
+  max-width: calc(var(--pw) * 0.74);
+}
+
+/*
+  La seule phrase du papier qui parle d'un geste. Elle est en italique et en
+  laiton, pas en encre : typographiquement, elle s'annonce comme une mention de
+  service et non comme du texte du livre.
+*/
+.liseur-garde-geste {
+  margin-top: calc(var(--pw) * 0.028);
+  font-size: calc(var(--pw) * 0.0245);
+  font-style: italic;
+  color: rgba(198, 161, 92, 0.85);
+}
+
+.liseur-garde-mention {
+  font-size: calc(var(--pw) * 0.025);
+  letter-spacing: 0.30em;
+  text-transform: uppercase;
+  color: rgba(198, 161, 92, 0.7);
+}
+
+/* Le fleuron est rouge sur le colophon, qui est du papier clair. Sur la garde
+   sombre, cette encre passe au noir : il prend le laiton du reste de la page. */
+.liseur-garde .liseur-fleuron { color: rgba(198, 161, 92, 0.6); }
+
+/* --- Le folio d'une page illustree --------------------------------------- */
+
+/*
+  L'illustration occupe le feuillet entier, il n'y a donc aucune marge ou loger
+  le numero : il se pose sur l'image, comme dans un album a fond perdu. Le voile
+  sombre ne sert qu'a le garder lisible sur une illustration claire ; sans lui,
+  le folio disparait une planche sur trois.
+
+  pointer-events: none, sans quoi ce petit bloc, pose au-dessus des moities
+  cliquables, creerait un endroit de la page ou le clic ne tourne plus rien.
+*/
+.liseur-folio-image {
+  position: absolute;
+  bottom: calc(var(--pw) * 0.042);
+  z-index: 27;
+  padding: calc(var(--pw) * 0.011) calc(var(--pw) * 0.026);
+  border-radius: 2px;
+  background: rgba(16, 12, 9, 0.52);
+  backdrop-filter: blur(3px);
+  font-size: calc(var(--pw) * 0.021);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(246, 239, 227, 0.86);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* Au bord exterieur, comme le folio d'une page de texte, jamais contre la
+   pliure ou il se ferait avaler par l'ombre de la reliure. */
+.liseur-folio-image-gauche { left: calc(var(--pw) * 0.048); }
+.liseur-folio-image-droite { right: calc(var(--pw) * 0.048); }
+
+/* --- Ce que la couverture et le colophon annoncent ----------------------- */
+
+.liseur-couverture-compte {
+  margin-top: calc(var(--pw) * 0.026);
+  font-size: calc(var(--pw) * 0.0225);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(198, 161, 92, 0.6);
+}
+
+.liseur-colophon-filet {
+  width: calc(var(--pw) * 0.09);
+  height: 1px;
+  background: rgba(125, 115, 104, 0.3);
+  flex: none;
+}
+
+.liseur-colophon-suite {
+  font-size: calc(var(--pw) * 0.0245);
+  line-height: 1.72;
+  color: var(--encre-discrete);
+  max-width: calc(var(--pw) * 0.78);
+}
+
+.liseur-colophon-suite strong {
+  color: var(--encre-douce);
+  font-weight: 600;
+}
+
+/* --- Les reperes de geste, montres une seule fois ------------------------ */
+
+/*
+  Un calque qui ne bloque rien.
+
+  pointer-events vaut none sur le calque et auto sur la seule carte : quelqu'un
+  qui a compris avant d'avoir lu peut tourner la page immediatement, et ce
+  premier tour referme les reperes. C'est le contraire d'une visite guidee, qui
+  exige d'etre terminee avant de laisser toucher a quoi que ce soit.
+*/
+.liseur-reperes {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 9, 7, 0.44);
+  animation: liseur-reperes-entree 0.45s ease-out both;
+}
+
+@keyframes liseur-reperes-entree {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.liseur-repere {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: 'Outfit Variable', system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+}
+
+.liseur-repere i {
+  font-size: 0.85rem;
+  color: rgba(198, 161, 92, 0.92);
+}
+
+.liseur-repere-gauche { left: 6%; }
+.liseur-repere-droite { right: 6%; }
+
+.liseur-reperes-carte {
+  pointer-events: auto;
+  max-width: min(23rem, 76%);
+  padding: 1.2rem 1.3rem 1.1rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: rgba(20, 16, 12, 0.95);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  font-family: 'Outfit Variable', system-ui, sans-serif;
+  color: #e6e2db;
+}
+
+.liseur-reperes-titre {
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #ffffff;
+  margin-bottom: 0.8rem;
+}
+
+.liseur-reperes-liste {
+  display: flex;
+  flex-direction: column;
+  gap: 0.62rem;
+  font-size: 0.795rem;
+  line-height: 1.55;
+  color: rgba(220, 214, 205, 0.9);
+}
+
+.liseur-reperes-liste li {
+  display: flex;
+  gap: 0.68rem;
+  align-items: flex-start;
+}
+
+.liseur-reperes-liste i {
+  flex: none;
+  width: 1rem;
+  margin-top: 0.22rem;
+  text-align: center;
+  color: rgba(198, 161, 92, 0.92);
+}
+
+.liseur-reperes-liste strong {
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.liseur-reperes-bouton {
+  margin-top: 1rem;
+  width: 100%;
+  min-height: 44px;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.liseur-reperes-bouton:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/*
+  Sous 900 pixels le liseur passe en page simple. Les deux etiquettes laterales
+  designent alors des moities qui n'existent plus, et sur un ecran etroit elles
+  viendraient de toute facon se poser sur la carte.
+*/
+@media (max-width: 899px) {
+  .liseur-repere { display: none; }
+}
+
 /* --- Le rail de position ------------------------------------------------- */
 
 /*

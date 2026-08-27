@@ -1,10 +1,23 @@
-import React, { useState } from 'react';
-import { Character, Importance } from '../types';
+import React, { useMemo, useState } from 'react';
+import { Character, Importance, LIBELLE_IMPORTANCE, Scene } from '../types';
 import FiltreImportance, { PastilleImportance, filtrerParImportance } from './FiltreImportance';
 import { notifier, notifierErreur } from '../services/notifications';
+import BarreVue, { useCollectionFiltree, useReglagesVue } from './BarreVue';
+import VueCompacte, { focaliserFiche, type LigneCompacte } from './VueCompacte';
+import { ancre, detailScenes, resumeScenes, scenesParPersonnage } from '../services/vue';
 
 interface CharacterReviewProps {
   characters: Character[];
+  /**
+   * Le sequencier, quand il existe deja.
+   *
+   * Il ne sert pas a afficher les scenes ici, mais a repondre a « dans combien
+   * de scenes ce personnage apparait-il », question qu'aucun ecran ne savait
+   * trancher alors que la donnee existe depuis toujours dans
+   * `Scene.charactersPresent`. Sur un casting de quarante fiches, c'est ce qui
+   * distingue un role d'un figurant mieux que n'importe quelle etiquette.
+   */
+  scenes?: Scene[];
   stylePrompt: string;
   onStyleChange: (style: string) => void;
   onRemoveCharacter: (id: string) => void;
@@ -28,6 +41,7 @@ const ART_STYLES = [
 
 const CharacterReview: React.FC<CharacterReviewProps> = ({
   characters,
+  scenes = [],
   stylePrompt,
   onStyleChange,
   onRemoveCharacter,
@@ -39,7 +53,61 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
 }) => {
   /** Sélection vide : tout le casting est visible. */
   const [importances, setImportances] = useState<Importance[]>([]);
-  const visibles = filtrerParImportance(characters, importances);
+  const parImportance = filtrerParImportance(characters, importances);
+
+  /* Le mode compact vient APRÈS le filtre par importance : les deux se
+     composent, on peut chercher « marie » parmi les seuls principaux. */
+  const vue = useReglagesVue('casting');
+  const { visibles, comptes } = useCollectionFiltree(
+    parImportance,
+    vue.recherche,
+    vue.etat,
+    (c) => [c.name, c.role, c.shortDescription, c.personality],
+  );
+
+  /** Le lien vers le séquencier, calculé une fois pour tout le casting. */
+  const scenesDe = useMemo(() => scenesParPersonnage(scenes, characters), [scenes, characters]);
+
+  const lignes: LigneCompacte[] = visibles.map((char) => {
+    const numeros = scenesDe[char.id] || [];
+    const resume = resumeScenes(numeros);
+    return {
+      id: char.id,
+      nom: char.name,
+      sousTitre: char.role,
+      vignette: char.imageUrl,
+      statut: char.status,
+      detail: resume ? detailScenes(numeros) : undefined,
+      etiquettes: [
+        ...(char.importance ? [{ texte: LIBELLE_IMPORTANCE[char.importance] }] : []),
+        ...(resume ? [{ texte: resume, ton: 'lien' as const, titre: detailScenes(numeros) }] : []),
+      ],
+      actions: (
+        <>
+          <button
+            onClick={() => openEditModal(char)}
+            aria-label={`Modifier la fiche de ${char.name}`}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition"
+          >
+            <i className="fas fa-pen text-xs" aria-hidden="true"></i>
+          </button>
+          <button
+            onClick={() => onRemoveCharacter(char.id)}
+            aria-label={`Supprimer le personnage ${char.name}`}
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-red-500 transition"
+          >
+            <i className="fas fa-times text-xs" aria-hidden="true"></i>
+          </button>
+        </>
+      ),
+    };
+  });
+
+  /** Un clic sur une ligne ramène aux cartes, puis désigne celle qu'on cherchait. */
+  const ouvrirFiche = (id: string) => {
+    vue.setDensite('cartes');
+    focaliserFiche('perso', id);
+  };
 
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
@@ -202,7 +270,7 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
                  importants », et sans jamais dire qui il avait laissé de côté. */}
              <FiltreImportance elements={characters} actives={importances} onChange={setImportances} />
         </div>
-        <button 
+        <button
             onClick={openAddModal}
             className="px-6 py-3 bg-surface-highlight hover:bg-white/10 text-white rounded-xl text-sm font-semibold border border-white/10 transition flex items-center gap-2 group"
         >
@@ -212,11 +280,37 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
             Ajouter un personnage
         </button>
       </div>
-        
-      {/* Characters Grid */}
+
+      {/* Recherche, filtre d'état et densité. Voir components/BarreVue.tsx. */}
+      <BarreVue
+        recherche={vue.recherche}
+        onRecherche={vue.setRecherche}
+        etat={vue.etat}
+        onEtat={vue.setEtat}
+        densite={vue.densite}
+        onDensite={vue.setDensite}
+        comptes={comptes}
+        visibles={visibles.length}
+        nom="personnage"
+        exemple="Chercher un nom, un rôle, un trait"
+        planchesPossibles={characters.some((c) => Boolean(c.imageUrl))}
+        sansEtat={comptes.faits === 0 && comptes.erreurs === 0}
+      />
+
+      {vue.densite !== 'cartes' ? (
+        <VueCompacte
+          lignes={lignes}
+          densite={vue.densite}
+          onOuvrir={ouvrirFiche}
+          ratioImage="3 / 2"
+          vide="Aucun personnage ne correspond à cette recherche."
+        />
+      ) : (
+
+      /* Characters Grid */
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {visibles.map((char) => (
-            <div key={char.id} className="group glass-card rounded-2xl p-6 hover:bg-surface-highlight/60 transition-all duration-300 relative overflow-hidden">
+            <div key={char.id} id={ancre('perso', char.id)} className="group glass-card rounded-2xl p-6 hover:bg-surface-highlight/60 transition-all duration-300 relative overflow-hidden">
               
               {/* Actions Overlay */}
               {/* Ces deux boutons n'avaient ni libellé ni texte masqué, seulement une
@@ -293,6 +387,7 @@ const CharacterReview: React.FC<CharacterReviewProps> = ({
             </div>
           ))}
       </div>
+      )}
 
       <div className="flex justify-center pt-12">
         <button

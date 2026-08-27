@@ -1,0 +1,496 @@
+/*
+ * Le mode d'affichage compact.
+ *
+ * POURQUOI CE FICHIER PLUTOT QUE DES CLASSES TAILWIND
+ *
+ * Deux mises en page d'ici ne s'expriment pas bien en classes utilitaires : une
+ * ligne qui doit tenir en quarante pixels quel que soit son contenu, et un mur
+ * de vignettes qui se remplit tout seul selon la largeur. Les ecrire ici garde
+ * le JSX lisible et met les deux chiffres qui comptent, la hauteur de ligne et
+ * la taille de vignette, a un seul endroit ou les regler.
+ *
+ * Les couleurs reprennent celles de tailwind.config.js : primary #6366f1,
+ * surface #0f172a, surface-highlight #1e293b.
+ */
+
+/* --------------------------------------------------------------------------
+   La barre d'outils : recherche, filtre d'etat, densite
+   -------------------------------------------------------------------------- */
+
+.barre-vue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.875rem;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* Le champ prend la place restante, mais jamais au point de rejeter la
+   bascule de densite sur une deuxieme ligne dans une fenetre courante. */
+.barre-vue__champ {
+  position: relative;
+  flex: 1 1 12rem;
+  min-width: 9rem;
+  display: flex;
+  align-items: center;
+}
+
+.barre-vue__champ > i {
+  position: absolute;
+  left: 0.7rem;
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.9);
+  pointer-events: none;
+}
+
+.barre-vue__champ input {
+  width: 100%;
+  /* 44 px de haut : la cible tactile minimale, deja tenue ailleurs dans le projet. */
+  min-height: 44px;
+  padding: 0.5rem 2.25rem;
+  border-radius: 0.625rem;
+  background: rgba(2, 6, 23, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 0.875rem;
+}
+
+.barre-vue__champ input::placeholder { color: rgba(148, 163, 184, 0.75); }
+
+.barre-vue__champ input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+/* La croix d'effacement, a droite du champ. */
+.barre-vue__vider {
+  position: absolute;
+  right: 0.25rem;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  color: rgba(148, 163, 184, 0.9);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.barre-vue__vider:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
+
+.barre-vue__groupe {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.barre-vue__chip {
+  min-height: 34px;
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+  white-space: nowrap;
+}
+
+.barre-vue__chip:hover:not(:disabled) { color: #fff; border-color: rgba(255, 255, 255, 0.22); }
+.barre-vue__chip:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.barre-vue__chip[aria-pressed="true"] {
+  color: #fff;
+  background: rgba(99, 102, 241, 0.2);
+  border-color: #6366f1;
+}
+
+/* Le compte accole a l'etiquette. En chiffres a chasse fixe pour que la
+   largeur ne saute pas quand un compte passe de 9 a 10. */
+.barre-vue__chip b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  opacity: 0.65;
+  margin-left: 0.3rem;
+}
+
+/* L'etat « en erreur » se signale en ambre, jamais par la seule couleur :
+   l'etiquette porte le mot. */
+.barre-vue__chip.est-erreur[aria-pressed="true"] {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.8);
+}
+
+.barre-vue__densites {
+  display: flex;
+  border-radius: 0.625rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.barre-vue__densite {
+  min-width: 44px;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.barre-vue__densite:last-child { border-right: 0; }
+.barre-vue__densite:hover:not(:disabled) { color: #fff; background: rgba(255, 255, 255, 0.05); }
+.barre-vue__densite:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.barre-vue__densite[aria-pressed="true"] {
+  color: #fff;
+  background: rgba(99, 102, 241, 0.25);
+}
+
+/* Sous 640 px le libelle disparait, l'icone suffit et la barre tient sur une ligne. */
+@media (max-width: 640px) {
+  .barre-vue__densite span { display: none; }
+}
+
+.barre-vue__resultat {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* --------------------------------------------------------------------------
+   La liste : une ligne par element
+   -------------------------------------------------------------------------- */
+
+.liste-compacte {
+  display: flex;
+  flex-direction: column;
+  border-radius: 0.875rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+/*
+ * La ligne porte le fond et la bordure, le bouton porte le contenu.
+ *
+ * Le decoupage n'est pas cosmetique : les actions de fin de ligne sont des
+ * boutons, et un bouton ne peut pas en contenir un autre. Faire du bouton
+ * d'ouverture un `display: contents` reglait le balisage mais supprimait le
+ * contour de focus, donc rendait la navigation au clavier invisible.
+ */
+.ligne-compacte {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ligne-compacte__ouvrir {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  /* La hauteur qui fait tout l'interet du mode : une carte de casting mesure
+     environ 320 px, cette ligne en mesure 48. */
+  min-height: 48px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.ligne-compacte:last-child { border-bottom: 0; }
+.ligne-compacte:hover { background: rgba(99, 102, 241, 0.09); }
+
+.ligne-compacte__ouvrir:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: -2px;
+}
+
+/* Une ligne sur deux legerement teintee : sur cent lignes, l'oeil suit
+   horizontalement sans se tromper de rangee. */
+.ligne-compacte:nth-child(even) { background: rgba(255, 255, 255, 0.018); }
+.ligne-compacte:nth-child(even):hover { background: rgba(99, 102, 241, 0.09); }
+
+.ligne-compacte__rang {
+  flex: 0 0 auto;
+  width: 2rem;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.ligne-compacte__vignette {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 34px;
+  border-radius: 0.375rem;
+  overflow: hidden;
+  background: #020617;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: Outfit Variable, Outfit, system-ui, sans-serif;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 0.9rem;
+}
+
+.ligne-compacte__vignette img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ligne-compacte__corps {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.ligne-compacte__nom {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+/* Le sous-titre cede la place en premier quand la fenetre retrecit : le nom
+   est ce qu'on cherche, le role est ce qui aide une fois trouve. */
+.ligne-compacte__sous {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 4rem;
+  min-width: 0;
+}
+
+.ligne-compacte__etiquettes {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.ligne-compacte__etiquette {
+  font-size: 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.3rem;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  white-space: nowrap;
+}
+
+.ligne-compacte__etiquette.est-lien {
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.ligne-compacte__etiquette.est-alerte {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+/* Sous 720 px, les etiquettes secondaires et le sous-titre disparaissent :
+   il reste le rang, la vignette, le nom et l'etat, qui suffisent a reperer. */
+@media (max-width: 720px) {
+  .ligne-compacte__sous { display: none; }
+  .ligne-compacte__etiquettes { display: none; }
+}
+
+.ligne-compacte__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-right: 0.5rem;
+}
+
+/* Les actions n'apparaissent qu'au survol ou au focus sur un pointeur fin.
+   Sur ecran tactile, ou le survol n'existe pas, elles restent visibles. */
+@media (hover: hover) {
+  .ligne-compacte__actions { opacity: 0; transition: opacity 0.15s; }
+  .ligne-compacte:hover .ligne-compacte__actions,
+  .ligne-compacte:focus-within .ligne-compacte__actions { opacity: 1; }
+}
+
+/* --------------------------------------------------------------------------
+   L'etat, partage par la liste et le mur
+   -------------------------------------------------------------------------- */
+
+.pastille-etat {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  border: 1px solid transparent;
+}
+
+/* La forme et l'icone changent en meme temps que la couleur : un daltonien
+   distingue la coche du point d'exclamation, pas le vert de l'ambre. */
+.pastille-etat.est-fait { color: #6ee7b7; background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); }
+.pastille-etat.est-erreur { color: #fcd34d; background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.45); }
+.pastille-etat.est-attente { color: #64748b; background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); }
+.pastille-etat.est-encours { color: #a5b4fc; background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.45); }
+
+/* --------------------------------------------------------------------------
+   Le mur de planches : comparer les images entre elles
+   -------------------------------------------------------------------------- */
+
+.mur-planches {
+  display: grid;
+  /* Le remplissage automatique est le point : sur un ecran large on obtient
+     dix vignettes par rangee, sur un portable cinq, sans point de rupture. */
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  gap: 0.4rem;
+}
+
+.planche-vignette {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #020617;
+  cursor: pointer;
+}
+
+.planche-vignette:hover { border-color: #6366f1; }
+
+.planche-vignette:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+.planche-vignette__cadre {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #020617;
+}
+
+.planche-vignette__cadre img {
+  width: 100%;
+  height: 100%;
+  /* `contain` et non `cover` : le mur sert a comparer des cadrages, un
+     recadrage automatique mentirait sur ce qui a ete produit. */
+  object-fit: contain;
+}
+
+.planche-vignette__vide {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 0.7rem;
+  background: linear-gradient(160deg, rgba(30, 41, 59, 0.9), rgba(2, 6, 23, 0.9));
+}
+
+/* La legende reste lisible sur une image claire comme sur une image sombre :
+   fond opaque plutot que simple ombre portee. */
+.planche-vignette__legende {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.4rem;
+  background: rgba(2, 6, 23, 0.92);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.68rem;
+  color: #cbd5e1;
+}
+
+.planche-vignette__legende b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(148, 163, 184, 0.85);
+  font-weight: 700;
+}
+
+.planche-vignette__legende span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Le retour a la fiche complete
+   -------------------------------------------------------------------------- */
+
+/*
+ * Quand une ligne compacte renvoie vers sa carte, le defilement seul ne suffit
+ * pas a dire laquelle : la page se pose au milieu d'une dizaine de cartes
+ * identiques. Ce halo dure une seconde et demie, le temps de la designer.
+ */
+.fiche-visee {
+  animation: viser 1.6s ease-out;
+  border-radius: 1rem;
+}
+
+@keyframes viser {
+  0%, 55% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.85); }
+  100% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0); }
+}
+
+/* Un utilisateur qui a demande moins d'animation garde le halo, mais fixe :
+   c'est une information, pas une decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .fiche-visee { animation: none; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.85); }
+}
+
+.vue-vide {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.875rem;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 0.875rem;
+}
