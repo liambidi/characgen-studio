@@ -128,15 +128,8 @@ const DELAI_SAUVEGARDE_GENERATION_MS = 8_000;
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.UPLOAD);
 
-  /*
-    Quel ecran est a l'affiche, et quel recit est ouvert.
-
-    On demarre sur le travail plutot que sur l'accueil : au tout premier
-    passage il n'y a aucun projet, et faire traverser une liste vide avant de
-    pouvoir deposer un fichier serait une porte a ouvrir pour rien. La liste
-    prend la main juste apres, si elle n'est pas vide.
-  */
-  const [ecran, setEcran] = useState<'accueil' | 'travail'>('travail');
+  /* Quel ecran est a l'affiche, et quel recit est ouvert. */
+  const [ecran, setEcran] = useState<'accueil' | 'travail'>('accueil');
   const [projetId, setProjetId] = useState<string>(creerIdProjet);
   const [fiches, setFiches] = useState<FicheProjet[]>([]);
 

@@ -28,9 +28,9 @@ const Vignette: React.FC<{ apercu?: string; classe: string }> = ({ apercu, class
     <div className={`${classe} accueil__vignette-vide`}><i className="fas fa-book-open" aria-hidden="true"></i></div>
   );
 
-const ActionNouvelle: React.FC<{ onClick: () => void; principale?: boolean }> = ({ onClick, principale = false }) => (
-  <button onClick={onClick} className={principale ? 'accueil__bouton accueil__bouton--principal' : 'accueil__bouton accueil__bouton--secondaire'}>
-    <i className="fas fa-plus" aria-hidden="true"></i> Nouveau récit
+const ActionNouvelle: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <button onClick={onClick} className="accueil__bouton accueil__bouton--nouveau">
+    <i className="fas fa-plus" aria-hidden="true"></i><span>Nouveau récit</span>
   </button>
 );
 
@@ -63,7 +63,7 @@ const Accueil: React.FC<AccueilProps> = ({ fiches, onOuvrir, onNouveau, onImport
   };
 
   return (
-    <main id="contenu-principal" className="accueil">
+    <main id="contenu-principal" className={`accueil ${recent ? 'accueil--avec-recits' : 'accueil--vide'}`}>
       <header className="accueil__entete">
         <div className="accueil__marque" aria-label="CharacGen Studio">
           <span className="accueil__sceau" aria-hidden="true"><i className="fas fa-feather-pointed"></i></span>
@@ -77,62 +77,66 @@ const Accueil: React.FC<AccueilProps> = ({ fiches, onOuvrir, onNouveau, onImport
 
       {recent ? (
         <>
+          <RepereParcours onAide={onAide} />
+
           <section className="accueil__introduction" aria-labelledby="accueil-titre">
-            <div><h1 id="accueil-titre">Reprendre là où vous en étiez</h1><p>Retrouvez votre récit, son avancement et les éléments déjà créés.</p></div>
+            <div><h1 id="accueil-titre">Reprendre votre récit</h1><p>Retrouvez son avancement et les éléments déjà créés.</p></div>
             <span className="accueil__compteur">{pluriel(fiches.length, 'récit')}</span>
           </section>
 
-          <article className="accueil__recit-principal">
-            <div className="accueil__image-principale">
-              <Vignette apercu={recent.apercu} classe="accueil__image" />
-              <div className="accueil__image-voile" aria-hidden="true"></div>
-              <span className="accueil__date">Modifié le {dateCourte(recent.misAJourLe)}</span>
-            </div>
-            <div className="accueil__recit-corps">
-              <div><p className="accueil__etape">Étape {rangEtape(recent.etape)} sur {nbEtapes}</p><h2 title={recent.titre}>{recent.titre}</h2><p className="accueil__etape-nom">{libelleEtape(recent.etape)}</p></div>
-              <div className="accueil__avancement">
-                <div className="accueil__avancement-ligne"><span>Planches illustrées</span><strong>{recent.nbScenes ? `${recent.nbPlanches} sur ${recent.nbScenes}` : 'À venir'}</strong></div>
-                <div className="accueil__jauge" aria-label={recent.nbScenes ? `${progression}% des scènes illustrées` : 'Aucune scène à illustrer'}><span style={{ width: `${Math.max(recent.nbScenes ? 0 : 4, Math.min(100, progression))}%` }}></span></div>
+          <div className={`accueil__tableau ${autres.length ? '' : 'accueil__tableau--sans-colonne'}`}>
+            <article className="accueil__recit-principal">
+              <div className="accueil__image-principale">
+                <Vignette apercu={recent.apercu} classe="accueil__image" />
+                <div className="accueil__image-voile" aria-hidden="true"></div>
+                <span className="accueil__date">Modifié le {dateCourte(recent.misAJourLe)}</span>
               </div>
-              <ul className="accueil__faits" aria-label="Contenu du récit">
-                <li><i className="fas fa-user" aria-hidden="true"></i>{pluriel(recent.nbPersonnages, 'personnage')}</li>
-                <li><i className="fas fa-mountain-sun" aria-hidden="true"></i>{pluriel(recent.nbDecors, 'décor')}</li>
-                <li><i className="fas fa-images" aria-hidden="true"></i>{pluriel(recent.nbPlanches, 'planche')}</li>
-              </ul>
-              <div className="accueil__actions-recits">
-                <button onClick={() => onOuvrir(recent.id)} className="accueil__bouton accueil__bouton--principal">Continuer <i className="fas fa-arrow-right" aria-hidden="true"></i></button>
-                <button onClick={() => demanderSuppression(recent)} className="accueil__supprimer">Supprimer ce récit</button>
+              <div className="accueil__recit-corps">
+                <div><p className="accueil__etape">Étape {rangEtape(recent.etape)} sur {nbEtapes}</p><h2 title={recent.titre}>{recent.titre}</h2><p className="accueil__etape-nom">{libelleEtape(recent.etape)}</p></div>
+                <div className="accueil__avancement">
+                  <div className="accueil__avancement-ligne"><span>Planches illustrées</span><strong>{recent.nbScenes ? `${recent.nbPlanches} sur ${recent.nbScenes}` : 'À venir'}</strong></div>
+                  <div className="accueil__jauge" aria-label={recent.nbScenes ? `${progression}% des scènes illustrées` : 'Aucune scène à illustrer'}><span style={{ width: `${Math.max(recent.nbScenes ? 0 : 4, Math.min(100, progression))}%` }}></span></div>
+                </div>
+                <ul className="accueil__faits" aria-label="Contenu du récit">
+                  <li><i className="fas fa-user" aria-hidden="true"></i>{pluriel(recent.nbPersonnages, 'personnage')}</li>
+                  <li><i className="fas fa-mountain-sun" aria-hidden="true"></i>{pluriel(recent.nbDecors, 'décor')}</li>
+                  <li><i className="fas fa-images" aria-hidden="true"></i>{pluriel(recent.nbPlanches, 'planche')}</li>
+                </ul>
+                <div className="accueil__actions-recits">
+                  <button onClick={() => onOuvrir(recent.id)} className="accueil__bouton accueil__bouton--principal">Continuer <i className="fas fa-arrow-right" aria-hidden="true"></i></button>
+                  <button onClick={() => demanderSuppression(recent)} className="accueil__supprimer">Supprimer ce récit</button>
+                </div>
               </div>
-            </div>
-          </article>
+            </article>
 
-          <RepereParcours onAide={onAide} />
+            {autres.length > 0 && <aside className="accueil__colonne-laterale">
+              <section className="accueil__bibliotheque" aria-labelledby="autres-recits">
+                <div className="accueil__section-titre"><h2 id="autres-recits">Autres récits</h2><span>{pluriel(autres.length, 'récit')}</span></div>
+                <div className="accueil__grille">
+                  {autres.map(fiche => <article key={fiche.id} className="accueil__carte">
+                    <button onClick={() => onOuvrir(fiche.id)} className="accueil__carte-ouverture" aria-label={`Ouvrir ${fiche.titre}`}>
+                      <Vignette apercu={fiche.apercu} classe="accueil__carte-image" />
+                      <div className="accueil__carte-corps"><h3 title={fiche.titre}>{fiche.titre}</h3><p>Étape {rangEtape(fiche.etape)} sur {nbEtapes} · {libelleEtape(fiche.etape)}</p><span>{pluriel(fiche.nbPlanches, 'planche')}</span></div>
+                      <i className="fas fa-arrow-up-right-from-square accueil__carte-fleche" aria-hidden="true"></i>
+                    </button>
+                    <button onClick={() => demanderSuppression(fiche)} className="accueil__carte-supprimer">Supprimer</button>
+                  </article>)}
+                </div>
+              </section>
+            </aside>}
 
-          {autres.length > 0 && <section className="accueil__bibliotheque" aria-labelledby="autres-recits">
-            <div className="accueil__section-titre"><h2 id="autres-recits">Autres récits</h2><span>{pluriel(autres.length, 'récit')}</span></div>
-            <div className="accueil__grille">
-              {autres.map(fiche => <article key={fiche.id} className="accueil__carte">
-                <button onClick={() => onOuvrir(fiche.id)} className="accueil__carte-ouverture" aria-label={`Ouvrir ${fiche.titre}`}>
-                  <Vignette apercu={fiche.apercu} classe="accueil__carte-image" />
-                  <div className="accueil__carte-corps"><h3 title={fiche.titre}>{fiche.titre}</h3><p>Étape {rangEtape(fiche.etape)} sur {nbEtapes} · {libelleEtape(fiche.etape)}</p><span>{pluriel(fiche.nbPlanches, 'planche')}</span></div>
-                  <i className="fas fa-arrow-up-right-from-square accueil__carte-fleche" aria-hidden="true"></i>
-                </button>
-                <button onClick={() => demanderSuppression(fiche)} className="accueil__carte-supprimer">Supprimer</button>
-              </article>)}
-            </div>
-          </section>}
-
-          <footer className="accueil__pied">
-            <div><h2>Un récit de plus ?</h2><p>Commencez avec un nouveau texte ou reprenez une sauvegarde exportée.</p><p className="accueil__stockage"><i className="fas fa-hard-drive" aria-hidden="true"></i> Vos récits sont enregistrés dans ce navigateur.</p></div>
-            <div className="accueil__pied-actions"><ActionNouvelle onClick={onNouveau} /><button onClick={onImporter} className="accueil__bouton accueil__bouton--secondaire"><i className="fas fa-file-import" aria-hidden="true"></i> Importer un projet</button></div>
-          </footer>
+            <footer className="accueil__pied">
+              <div><h2>Un récit de plus ?</h2><p>Commencez avec un nouveau texte ou reprenez une sauvegarde exportée.</p><p className="accueil__stockage"><i className="fas fa-hard-drive" aria-hidden="true"></i> Vos récits sont enregistrés dans ce navigateur.</p></div>
+              <div className="accueil__pied-actions"><ActionNouvelle onClick={onNouveau} /><button onClick={onImporter} className="accueil__bouton accueil__bouton--secondaire"><i className="fas fa-file-import" aria-hidden="true"></i> Importer un projet</button></div>
+            </footer>
+          </div>
         </>
       ) : (
         <section className="accueil__vide" aria-labelledby="accueil-titre">
           <div className="accueil__vide-sceau" aria-hidden="true"><i className="fas fa-book-open"></i></div>
           <h1 id="accueil-titre">Du récit au livre illustré</h1>
           <p>Importez un roman ou une nouvelle. CharacGen en tire les personnages, les décors et les scènes, puis les illustre pour composer un livre.</p>
-          <div className="accueil__vide-actions"><ActionNouvelle onClick={onNouveau} principale /><button onClick={onImporter} className="accueil__bouton accueil__bouton--secondaire"><i className="fas fa-file-import" aria-hidden="true"></i> Importer un projet</button></div>
+          <div className="accueil__vide-actions"><ActionNouvelle onClick={onNouveau} /><button onClick={onImporter} className="accueil__bouton accueil__bouton--secondaire"><i className="fas fa-file-import" aria-hidden="true"></i> Importer un projet</button></div>
           <RepereParcours onAide={onAide} />
           <p className="accueil__stockage"><i className="fas fa-hard-drive" aria-hidden="true"></i> Vos récits sont enregistrés dans ce navigateur.</p>
         </section>
